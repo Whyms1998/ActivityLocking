@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="inspector_desc">Activity 查询：在使用其他应用时，用悬浮条显示当前界面的包名和类名。本服务不读取屏幕内容。</string>
+</resources>

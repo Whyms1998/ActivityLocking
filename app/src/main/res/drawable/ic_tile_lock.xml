@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 快捷磁贴图标：铺满 24dp 视口的锁定图形，磁贴中显示更大 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,17.5c1.38,0 2.5,-1.12 2.5,-2.5s-1.12,-2.5 -2.5,-2.5S9.5,13.62 9.5,15S10.62,17.5 12,17.5zM17.5,8h-1V6c0,-2.49 -2.01,-4.5 -4.5,-4.5S7.5,3.51 7.5,6v2h-1C5.12,8 4,9.12 4,10.6v8.8C4,20.88 5.12,22 6.5,22h11c1.38,0 2.5,-1.12 2.5,-2.6v-8.8C20,9.12 18.88,8 17.5,8zM9.5,6c0,-1.38 1.12,-2.5 2.5,-2.5S14.5,4.62 14.5,6v2h-5V6zM17.5,19.4c0,0.11 -0.09,0.2 -0.2,0.2h-11c-0.11,0 -0.2,-0.09 -0.2,-0.2v-8.8c0,-0.11 0.09,-0.2 0.2,-0.2h11c0.11,0 0.2,0.09 0.2,0.2V19.4z" />
+</vector>
