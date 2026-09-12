@@ -64,6 +64,7 @@ fun FavoritesScreen() {
     val ctx = LocalContext.current
     var deleting by remember { mutableStateOf<LockRule?>(null) }
     var pendingUnlock by remember { mutableStateOf<LockRule?>(null) }
+    var pendingDelete by remember { mutableStateOf<LockRule?>(null) }
 
     fun refresh() {
         for (r in rules) {
@@ -187,7 +188,14 @@ fun FavoritesScreen() {
                             IconButton(onClick = { editing = rule }) {
                                 Icon(Icons.Default.Edit, contentDescription = "备注")
                             }
-                            IconButton(onClick = { deleting = rule }) {
+                            IconButton(onClick = {
+                                // 删除"锁定中"的条目同样触发自律验证，防止绕过
+                                if (locked && VerifyGate.isEnabled(ctx)) {
+                                    pendingDelete = rule
+                                } else {
+                                    deleting = rule
+                                }
+                            }) {
                                 Icon(Icons.Default.Delete, contentDescription = "删除条目")
                             }
                             Switch(
@@ -219,6 +227,16 @@ fun FavoritesScreen() {
                 }
             }
         }
+    }
+
+    pendingDelete?.let { rule ->
+        UnlockVerifyDialog(
+            onConfirmed = {
+                pendingDelete = null
+                deleting = rule
+            },
+            onDismiss = { pendingDelete = null }
+        )
     }
 
     deleting?.let { rule ->
