@@ -1,5 +1,6 @@
 package com.activitylock.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +15,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -36,6 +38,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
@@ -52,6 +55,56 @@ import kotlinx.coroutines.launch
 
 private fun key(r: LockRule) = "${r.packageName}/${r.activityName}"
 
+@Composable
+private fun GroupHeader(
+    pkg: String,
+    count: Int,
+    lockedCount: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    val label = AppStore.findApp(pkg)?.label ?: pkg
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .clickable(onClick = onToggle),
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AppIcon(pkg, 32.dp)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(label, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "$count 个界面 · $lockedCount 个锁定中",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            androidx.compose.material3.Text(
+                if (expanded) "收起" else "展开",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 4.dp)
+            )
+            Icon(
+                Icons.Default.KeyboardArrowDown,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.rotate(if (expanded) 0f else 180f)
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FavoritesScreen() {
@@ -65,6 +118,7 @@ fun FavoritesScreen() {
     var deleting by remember { mutableStateOf<LockRule?>(null) }
     var pendingUnlock by remember { mutableStateOf<LockRule?>(null) }
     var pendingDelete by remember { mutableStateOf<LockRule?>(null) }
+    val expanded = remember { mutableStateMapOf<String, Boolean>() }
 
     fun refresh() {
         for (r in rules) {
@@ -117,7 +171,21 @@ fun FavoritesScreen() {
             }
         } else {
             LazyColumn(Modifier.fillMaxSize()) {
-                items(rules, key = { "${it.packageName}/${it.activityName}" }) { rule ->
+                val grouped = rules.sortedBy { it.createdAt }.groupBy { it.packageName }
+                grouped.forEach { (pkg, groupRules) ->
+                    item(key = "hdr_$pkg") {
+                        GroupHeader(
+                            pkg = pkg,
+                            count = groupRules.size,
+                            lockedCount = groupRules.count { r ->
+                                if (r.block) r.locked else (actual[key(r)] ?: false)
+                            },
+                            expanded = expanded[pkg] != false,
+                            onToggle = { expanded[pkg] = !(expanded[pkg] != false) }
+                        )
+                    }
+                    if (expanded[pkg] != false) {
+                        items(groupRules, key = { key(it) }) { rule ->
                     val key = "${rule.packageName}/${rule.activityName}"
                     // block 模式以规则里的 locked 为准；pm 模式以系统实际状态为准
                     val pmDisabled = !rule.block && (actual[key] ?: false)
@@ -224,10 +292,12 @@ fun FavoritesScreen() {
                             )
                         }
                     }
+                    }
                 }
             }
         }
     }
+}
 
     pendingDelete?.let { rule ->
         UnlockVerifyDialog(
