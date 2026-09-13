@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.activitylock.app.core.VerifyGate
+import com.activitylock.app.ui.components.UnlockVerifyDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -42,6 +43,15 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
     var method by remember { mutableStateOf(VerifyGate.method(ctx)) }
     var password by remember { mutableStateOf(VerifyGate.password(ctx)) }
     var delaySec by remember { mutableStateOf(VerifyGate.delaySeconds(ctx)) }
+
+    // 验证开启期间，削弱性修改（关闭/换方式/改密码）需先通过当前验证
+    var verifiedThisSession by remember { mutableStateOf(false) }
+    val editLocked = enabled && !verifiedThisSession
+    var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    fun requireVerify(action: () -> Unit) {
+        if (editLocked) pendingAction = action else action()
+    }
 
     fun persist() {
         VerifyGate.save(ctx, enabled, method, password, delaySec)
@@ -67,6 +77,18 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
+            if (editLocked) {
+                Card(Modifier.fillMaxWidth()) {
+                    Text(
+                        "验证已开启：修改设置前需先通过当前验证。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+
             Card(Modifier.fillMaxWidth()) {
                 Row(
                     Modifier
@@ -85,9 +107,17 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                     }
                     Switch(
                         checked = enabled,
-                        onCheckedChange = {
-                            enabled = it
-                            persist()
+                        onCheckedChange = { want ->
+                            if (want) {
+                                enabled = true
+                                persist()
+                            } else {
+                                requireVerify {
+                                    enabled = false
+                                    verifiedThisSession = false
+                                    persist()
+                                }
+                            }
                         }
                     )
                 }
@@ -103,7 +133,9 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             RadioButton(
                                 selected = method == VerifyGate.METHOD_DELAY,
-                                onClick = { method = VerifyGate.METHOD_DELAY; persist() }
+                                onClick = {
+                                    requireVerify { method = VerifyGate.METHOD_DELAY; persist() }
+                                }
                             )
                             Text("等待指定时间")
                         }
@@ -112,17 +144,19 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                                 Modifier.padding(start = 40.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                TextButton(onClick = {
-                                    delaySec = (delaySec - 5).coerceAtLeast(5); persist()
-                                }) { Text("−") }
+                                TextButton(
+                                    enabled = !editLocked,
+                                    onClick = { requireVerify { delaySec = (delaySec - 5).coerceAtLeast(5); persist() } }
+                                ) { Text("−") }
                                 Text(
                                     "$delaySec 秒",
                                     style = MaterialTheme.typography.titleMedium,
                                     modifier = Modifier.padding(horizontal = 12.dp)
                                 )
-                                TextButton(onClick = {
-                                    delaySec = (delaySec + 5).coerceAtMost(60); persist()
-                                }) { Text("＋") }
+                                TextButton(
+                                    enabled = !editLocked,
+                                    onClick = { requireVerify { delaySec = (delaySec + 5).coerceAtMost(60); persist() } }
+                                ) { Text("＋") }
                             }
                         }
 
@@ -130,7 +164,9 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             RadioButton(
                                 selected = method == VerifyGate.METHOD_PASSWORD,
-                                onClick = { method = VerifyGate.METHOD_PASSWORD; persist() }
+                                onClick = {
+                                    requireVerify { method = VerifyGate.METHOD_PASSWORD; persist() }
+                                }
                             )
                             Text("输入指定密码")
                         }
@@ -141,10 +177,14 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(start = 40.dp, top = 8.dp, end = 16.dp),
+                                enabled = !editLocked,
                                 placeholder = { Text("设置解锁密码") },
                                 singleLine = true
                             )
-                            TextButton(onClick = { persist() }) { Text("保存密码") }
+                            TextButton(
+                                enabled = !editLocked && password.isNotBlank(),
+                                onClick = { requireVerify { persist() } }
+                            ) { Text("保存密码") }
                         }
                     }
                 }
@@ -152,10 +192,22 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
 
             Spacer(Modifier.height(16.dp))
             Text(
-                "验证在收藏夹解锁和磁贴「全部解锁」时生效；锁定操作不受影响。",
+                "验证在收藏夹解锁和磁贴「全部解锁」时生效；锁定操作不受影响。\n" +
+                    "验证开启时，关闭验证或修改验证方式也需要先通过当前验证。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+
+    pendingAction?.let { action ->
+        UnlockVerifyDialog(
+            onConfirmed = {
+                verifiedThisSession = true
+                pendingAction = null
+                action()
+            },
+            onDismiss = { pendingAction = null }
+        )
     }
 }
