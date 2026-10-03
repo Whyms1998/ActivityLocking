@@ -25,8 +25,8 @@ abstract class BaseLockTileService : TileService() {
         AppStore.ensureInit(applicationContext)
         val rules = AppStore.rules
         if (rules.isEmpty()) return
-        if (!targetLocked && VerifyGate.isEnabled(applicationContext)) {
-            // 自律模式：全解锁也要验证
+        if (!targetLocked && !VerifyGate.bulkRequirement(applicationContext, rules).isNone) {
+            // 自律模式：全局验证或任一界面单独设了解锁条件，全解锁都要先通过最强条件
             val i = android.content.Intent(applicationContext, UnlockGateActivity::class.java)
                 .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(i)

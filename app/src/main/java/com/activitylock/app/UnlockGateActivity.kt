@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -12,11 +13,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -24,14 +28,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.activitylock.app.core.AmsController
 import com.activitylock.app.core.AppStore
 import com.activitylock.app.core.LockEngine
-import com.activitylock.app.ui.components.UnlockVerifyDialog
+import com.activitylock.app.core.VerifyGate
 import com.activitylock.app.ui.theme.ActivityLockTheme
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 
 /**
  * 磁贴「全部解锁」的自律验证页：透明背景 + 居中验证卡片。
+ * 验证条件 = 全局 + 各界面单独条件的最强要求（要密码就要密码，否则取最长等待），
+ * 防止给某界面单独设了密码却被全局倒计时放过。
  * 验证通过后执行全部解锁并关闭。
  */
 class UnlockGateActivity : ComponentActivity() {
@@ -39,6 +48,7 @@ class UnlockGateActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppStore.ensureInit(applicationContext)
+        val requirement = VerifyGate.bulkRequirement(applicationContext, AppStore.rules)
         setContent {
             ActivityLockTheme {
                 Surface(
@@ -47,6 +57,7 @@ class UnlockGateActivity : ComponentActivity() {
                 ) {
                     Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                         GateCard(
+                            requirement = requirement,
                             onConfirmed = {
                                 Thread {
                                     runBlocking {
@@ -56,7 +67,7 @@ class UnlockGateActivity : ComponentActivity() {
                                             }
                                         }
                                     }
-                                    com.activitylock.app.core.AmsController.writeRules()
+                                    AmsController.writeRules()
                                 }.start()
                                 finish()
                             },
@@ -70,48 +81,76 @@ class UnlockGateActivity : ComponentActivity() {
 }
 
 @Composable
-private fun GateCard(onConfirmed: () -> Unit, onDismiss: () -> Unit) {
-    val ctx = androidx.compose.ui.platform.LocalContext.current
-    val usePassword = com.activitylock.app.core.VerifyGate.method(ctx) ==
-        com.activitylock.app.core.VerifyGate.METHOD_PASSWORD
-    val correct = com.activitylock.app.core.VerifyGate.password(ctx)
-    var passed by remember { mutableStateOf(false) }
+private fun GateCard(
+    requirement: VerifyGate.Requirement,
+    onConfirmed: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var passed by remember { mutableStateOf(requirement.isNone) }
 
     Card(Modifier.width(320.dp)) {
         Column(Modifier.padding(20.dp)) {
             Text("全部解锁验证", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(12.dp))
-            if (usePassword) {
-                var input by remember { mutableStateOf("") }
-                androidx.compose.material3.OutlinedTextField(
-                    value = input,
-                    onValueChange = { input = it },
-                    placeholder = { Text("解锁密码") },
-                    singleLine = true
-                )
-                if (input.isNotBlank() && input != correct) {
-                    Spacer(Modifier.height(4.dp))
-                    Text("密码不正确", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
-                }
-                passed = input.isNotBlank() && input == correct
-            } else {
-                val total = com.activitylock.app.core.VerifyGate.delaySeconds(ctx).coerceAtLeast(1)
-                var remaining by remember { mutableStateOf(total) }
-                androidx.compose.runtime.LaunchedEffect(Unit) {
-                    while (remaining > 0) {
-                        kotlinx.coroutines.delay(1000)
-                        remaining--
+            when (requirement.mode) {
+                VerifyGate.METHOD_QUIZ -> {
+                    var question by remember { mutableStateOf(VerifyGate.genQuiz()) }
+                    var input by remember { mutableStateOf("") }
+                    val ok = input.isNotBlank() && input.trim().toIntOrNull() == question.second
+                    Text("答对这道口算题即可全部解锁：", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text(question.first, style = MaterialTheme.typography.headlineSmall)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = input,
+                        onValueChange = { input = it.filter { c -> c.isDigit() || c == '-' } },
+                        placeholder = { Text("答案") },
+                        singleLine = true
+                    )
+                    if (input.isNotBlank() && !ok) {
+                        Spacer(Modifier.height(4.dp))
+                        Text("答案不对，再算算", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
                     }
+                    passed = ok
                 }
-                Text(
-                    if (remaining > 0) "自律提醒：请等待 $remaining 秒后再全部解锁。"
-                    else "等待完成，可以解锁了。",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                passed = remaining <= 0
+                VerifyGate.METHOD_PASSWORD -> {
+                    var input by remember { mutableStateOf("") }
+                    val ok = requirement.passwordOk(input)
+                    OutlinedTextField(
+                        value = input,
+                        onValueChange = { input = it },
+                        placeholder = { Text("解锁密码") },
+                        singleLine = true
+                    )
+                    if (input.isNotBlank() && !ok) {
+                        Spacer(Modifier.height(4.dp))
+                        Text("密码不正确", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+                    }
+                    passed = ok
+                }
+                VerifyGate.METHOD_DELAY -> {
+                    val total = requirement.delaySec.coerceAtLeast(1)
+                    var remaining by remember { mutableIntStateOf(total) }
+                    LaunchedEffect(Unit) {
+                        while (remaining > 0) {
+                            delay(1000)
+                            remaining--
+                        }
+                    }
+                    Text(
+                        if (remaining > 0) "自律提醒：请等待 $remaining 秒后再全部解锁。"
+                        else "等待完成，可以全部解锁了。",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    passed = remaining <= 0
+                }
+                else -> {
+                    Text("没有需要验证的界面。", style = MaterialTheme.typography.bodyMedium)
+                    passed = true
+                }
             }
             Spacer(Modifier.height(12.dp))
-            androidx.compose.foundation.layout.Row(Modifier.align(Alignment.End)) {
+            Row(Modifier.align(Alignment.End)) {
                 TextButton(onClick = onDismiss) { Text("取消") }
                 Spacer(Modifier.width(8.dp))
                 TextButton(enabled = passed, onClick = onConfirmed) {

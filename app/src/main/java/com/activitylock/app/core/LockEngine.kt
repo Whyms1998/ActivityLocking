@@ -12,15 +12,25 @@ data class LockOutcome(
 /**
  * 锁定引擎：优先组件禁用（pm disable-user）；
  * 被 HyperOS 等系统限制时，降级为系统级 Activity 启动拦截（ActivityController）。
+ * 若规则带跳转深链（redirect），只能走拦截模式——组件禁用发生在包管理层，
+ * 拦截器根本感知不到启动请求，无法实现"点图标跳转搜索页"。
  */
 object LockEngine {
 
-    suspend fun apply(pkg: String, cls: String, lock: Boolean): LockOutcome =
+    suspend fun apply(pkg: String, cls: String, lock: Boolean, redirectUri: String? = null): LockOutcome =
         withContext(Dispatchers.IO) {
-            if (lock) lock(pkg, cls) else unlock(pkg, cls)
+            if (lock) lock(pkg, cls, redirectUri) else unlock(pkg, cls)
         }
 
-    private fun lock(pkg: String, cls: String): LockOutcome {
+    /** 跳转目标：显式传入优先，否则沿用收藏夹里已存的。 */
+    private fun effectiveRedirect(pkg: String, cls: String, redirectUri: String?): String? =
+        redirectUri?.trim()?.takeIf { it.isNotBlank() }
+            ?: AppStore.rules.firstOrNull { it.packageName == pkg && it.activityName == cls }?.redirectUri
+
+    private fun lock(pkg: String, cls: String, redirectUri: String?): LockOutcome {
+        val redirect = effectiveRedirect(pkg, cls, redirectUri)
+        if (redirect != null) return lockWithRedirect(pkg, cls, redirect)
+
         val comp = "$pkg/$cls"
         for (cmd in listOf(
             arrayOf("pm", "disable-user", "--user", "0", comp),
@@ -40,6 +50,31 @@ object LockEngine {
         }
 
         // 组件禁用被系统限制（HyperOS 封锁 shell 修改组件状态）→ 系统级拦截
+        return lockByController(pkg, cls)
+    }
+
+    /** 拦截 + 跳转模式：组件必须保持启用，让拦截器看到启动请求后拒绝并拉起深链。 */
+    private fun lockWithRedirect(pkg: String, cls: String, redirect: String): LockOutcome {
+        if (!ShizukuManager.granted()) {
+            return LockOutcome(false, "none", "Shizuku 不可用，无法启用拦截")
+        }
+        // 之前可能被 pm 禁用过：先恢复组件，否则拦截器收不到启动请求
+        if (AppStore.isDisabled(pkg, cls)) {
+            ShizukuManager.enable(pkg, cls)
+        }
+        AppStore.addRule(pkg, cls, block = true, redirectUri = redirect)
+        AmsController.writeRules()
+        if (AmsController.ensureStarted()) {
+            ShizukuManager.run("am", "force-stop", pkg)
+            AppStore.recordHistory(pkg, cls, "block", "LOCK")
+            return LockOutcome(true, "block", "已启用拦截并跳转：$redirect")
+        }
+        AppStore.removeRule(pkg, cls)
+        AmsController.writeRules()
+        return LockOutcome(false, "none", "拦截进程启动失败")
+    }
+
+    private fun lockByController(pkg: String, cls: String): LockOutcome {
         if (ShizukuManager.granted()) {
             AppStore.addRule(pkg, cls, block = true)
             AmsController.writeRules()

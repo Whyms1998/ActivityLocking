@@ -35,19 +35,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.activitylock.app.core.AppStore
-
-private data class SchemePreset(val name: String, val uri: String)
-
-private val PRESETS = listOf(
-    SchemePreset("小红书 · 搜索", "xhsdiscover://search"),
-    SchemePreset("小红书 · 主页", "xhsdiscover://home"),
-    SchemePreset("抖音 · 搜索", "snssdk1128://search/trending"),
-    SchemePreset("微信 · 扫一扫", "weixin://dl/scan"),
-    SchemePreset("支付宝 · 扫一扫", "alipayqr://platformapi/startapp?saId=10000007"),
-    SchemePreset("哔哩哔哩 · 搜索", "bilibili://search"),
-    SchemePreset("知乎 · 搜索", "zhihu://search"),
-    SchemePreset("淘宝 · 搜索", "taobao://s.taobao.com"),
-)
+import com.activitylock.app.core.SchemePresets
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -56,8 +44,8 @@ fun SchemeLibraryScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     val q = query.trim()
 
-    val filtered = if (q.isEmpty()) PRESETS
-    else PRESETS.filter { it.name.contains(q, true) || it.uri.contains(q, true) }
+    val filtered = if (q.isEmpty()) SchemePresets.all
+    else SchemePresets.all.filter { it.name.contains(q, true) || it.uri.contains(q, true) }
 
     // 输入类似 scheme 的关键字时，解析本机可响应的应用
     val handlers = remember(q) {

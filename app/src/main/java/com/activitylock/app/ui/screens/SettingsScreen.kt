@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
@@ -52,6 +53,11 @@ fun SettingsScreen(
     onOpenSchemes: () -> Unit,
     onOpenHistory: () -> Unit,
     onOpenVerify: () -> Unit,
+    onOpenPresets: () -> Unit,
+    onOpenSchedules: () -> Unit,
+    onOpenQuota: () -> Unit,
+    onOpenScenes: () -> Unit,
+    onOpenStats: () -> Unit,
 ) {
     var status by remember { mutableStateOf(shizukuStatusText()) }
     var tick by remember { mutableStateOf(0) }
@@ -99,6 +105,36 @@ fun SettingsScreen(
         )
         SettingsEntry(
             icon = Icons.Default.Lock,
+            title = "方案库",
+            subtitle = "常用 App 一键配置，误删可一键恢复",
+            onClick = onOpenPresets
+        )
+        SettingsEntry(
+            icon = Icons.Default.DateRange,
+            title = "时长限额",
+            subtitle = "每日使用上限，超额当天拦截",
+            onClick = onOpenQuota
+        )
+        SettingsEntry(
+            icon = Icons.Default.Star,
+            title = "场景模式",
+            subtitle = "方案集合一键启用/停用",
+            onClick = onOpenScenes
+        )
+        SettingsEntry(
+            icon = Icons.Default.DateRange,
+            title = "拦截统计",
+            subtitle = "今日与累计拦截次数、最近事件",
+            onClick = onOpenStats
+        )
+        SettingsEntry(
+            icon = Icons.Default.DateRange,
+            title = "定时计划",
+            subtitle = "睡眠模式：指定时段自动全部上锁",
+            onClick = onOpenSchedules
+        )
+        SettingsEntry(
+            icon = Icons.Default.Lock,
             title = "解锁验证",
             subtitle = "自律：解锁前需等待或输入密码",
             onClick = onOpenVerify
@@ -106,7 +142,7 @@ fun SettingsScreen(
 
         Spacer(Modifier.height(24.dp))
         Text(
-            "应用锁 v0.1.0",
+            "应用锁 v0.4.0",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier

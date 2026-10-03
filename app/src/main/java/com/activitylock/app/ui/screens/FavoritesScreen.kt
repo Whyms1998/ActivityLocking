@@ -25,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -52,6 +53,14 @@ import com.activitylock.app.core.VerifyGate
 import com.activitylock.app.ui.components.AppIcon
 import com.activitylock.app.ui.components.UnlockVerifyDialog
 import kotlinx.coroutines.launch
+
+@Composable
+private fun VerifyModeRow(selected: Boolean, title: String, onClick: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        RadioButton(selected = selected, onClick = onClick)
+        Text(title, style = MaterialTheme.typography.bodyMedium)
+    }
+}
 
 private fun key(r: LockRule) = "${r.packageName}/${r.activityName}"
 
@@ -170,8 +179,10 @@ fun FavoritesScreen() {
                 )
             }
         } else {
+            val grouped = remember(rules) {
+                rules.sortedBy { it.createdAt }.groupBy { it.packageName }
+            }
             LazyColumn(Modifier.fillMaxSize()) {
-                val grouped = rules.sortedBy { it.createdAt }.groupBy { it.packageName }
                 grouped.forEach { (pkg, groupRules) ->
                     item(key = "hdr_$pkg") {
                         GroupHeader(
@@ -243,7 +254,7 @@ fun FavoritesScreen() {
                                             onClick = {
                                                 busy[key] = true
                                                 scope.launch {
-                                                    onOutcome(LockEngine.apply(rule.packageName, rule.activityName, true))
+                                                    onOutcome(LockEngine.apply(rule.packageName, rule.activityName, true, rule.redirectUri))
                                                     refresh()
                                                     busy[key] = false
                                                 }
@@ -252,13 +263,37 @@ fun FavoritesScreen() {
                                         )
                                     }
                                 }
+                                rule.redirectUri?.let { uri ->
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        "↗ 跳转：$uri",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.tertiary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                rule.verifyMode?.let { mode ->
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        "🔓 解锁条件：" + when (mode) {
+                                            VerifyGate.MODE_NONE -> "无需验证"
+                                            VerifyGate.METHOD_DELAY -> "等待 ${(rule.verifyDelaySec ?: VerifyGate.delaySeconds(ctx))} 秒"
+                                            VerifyGate.METHOD_PASSWORD -> "输入密码"
+                                            else -> "跟随全局"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.tertiary
+                                    )
+                                }
                             }
                             IconButton(onClick = { editing = rule }) {
                                 Icon(Icons.Default.Edit, contentDescription = "备注")
                             }
                             IconButton(onClick = {
-                                // 删除"锁定中"的条目同样触发自律验证，防止绕过
-                                if (locked && VerifyGate.isEnabled(ctx)) {
+                                // 删除"锁定中"的条目同样触发该界面的解锁条件，防止绕过
+                                if (locked && !VerifyGate.requirementFor(ctx, rule).isNone) {
                                     pendingDelete = rule
                                 } else {
                                     deleting = rule
@@ -273,12 +308,12 @@ fun FavoritesScreen() {
                                     if (wantLock) {
                                         busy[key] = true
                                         scope.launch {
-                                            onOutcome(LockEngine.apply(rule.packageName, rule.activityName, true))
+                                            onOutcome(LockEngine.apply(rule.packageName, rule.activityName, true, rule.redirectUri))
                                             refresh()
                                             busy[key] = false
                                         }
-                                    } else if (VerifyGate.isEnabled(ctx)) {
-                                        // 自律模式：解锁前需要验证
+                                    } else if (!VerifyGate.requirementFor(ctx, rule).isNone) {
+                                        // 自律模式：按该界面的解锁条件验证
                                         pendingUnlock = rule
                                     } else {
                                         busy[key] = true
@@ -301,6 +336,8 @@ fun FavoritesScreen() {
 
     pendingDelete?.let { rule ->
         UnlockVerifyDialog(
+            requirement = VerifyGate.requirementFor(ctx, rule),
+            title = "删除验证",
             onConfirmed = {
                 pendingDelete = null
                 deleting = rule
@@ -334,6 +371,7 @@ fun FavoritesScreen() {
 
     pendingUnlock?.let { rule ->
         UnlockVerifyDialog(
+            requirement = VerifyGate.requirementFor(ctx, rule),
             onConfirmed = {
                 pendingUnlock = null
                 busy[key(rule)] = true
@@ -349,9 +387,22 @@ fun FavoritesScreen() {
 
     editing?.let { rule ->
         var text by remember(rule) { mutableStateOf(rule.note) }
+        var redirect by remember(rule) { mutableStateOf(rule.redirectUri ?: "") }
+        var vMode by remember(rule) { mutableStateOf(rule.verifyMode) }
+        var vDelay by remember(rule) {
+            mutableStateOf(((rule.verifyDelaySec ?: VerifyGate.delaySeconds(ctx))).toString())
+        }
+        var vPwd by remember(rule) { mutableStateOf(rule.verifyPassword ?: "") }
+        var quota by remember(rule) { mutableStateOf(rule.quotaMin?.toString() ?: "") }
+        val globalReq = VerifyGate.globalRequirement(ctx)
+        val globalDesc = when (globalReq.mode) {
+            VerifyGate.MODE_NONE -> "已关闭"
+            VerifyGate.METHOD_DELAY -> "等待${globalReq.delaySec}秒"
+            else -> "密码"
+        }
         AlertDialog(
             onDismissRequest = { editing = null },
-            title = { Text("界面备注") },
+            title = { Text("编辑界面") },
             text = {
                 Column {
                     Text(rule.activityName, style = MaterialTheme.typography.bodySmall)
@@ -359,14 +410,115 @@ fun FavoritesScreen() {
                     OutlinedTextField(
                         value = text,
                         onValueChange = { text = it },
+                        label = { Text("备注") },
                         placeholder = { Text("例如：小红书首页 / 抖音推荐流") },
                         singleLine = true
                     )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = redirect,
+                        onValueChange = { redirect = it },
+                        label = { Text("拦截后跳转（留空则仅拦截）") },
+                        placeholder = { Text("深链 xhsdiscover://search 或界面类名") },
+                        singleLine = true
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = quota,
+                        onValueChange = { quota = it.filter { c -> c.isDigit() }.take(4) },
+                        label = { Text("每日限额（分钟，留空不限）") },
+                        placeholder = { Text("例如 20：超额后当天拦截此 App") },
+                        singleLine = true
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text("解锁条件", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(4.dp))
+                    VerifyModeRow(
+                        selected = vMode == null,
+                        title = "跟随全局（当前：$globalDesc）",
+                        onClick = { vMode = null }
+                    )
+                    VerifyModeRow(
+                        selected = vMode == VerifyGate.MODE_NONE,
+                        title = "无需验证",
+                        onClick = { vMode = VerifyGate.MODE_NONE }
+                    )
+                    VerifyModeRow(
+                        selected = vMode == VerifyGate.METHOD_DELAY,
+                        title = "等待倒计时",
+                        onClick = { vMode = VerifyGate.METHOD_DELAY }
+                    )
+                    if (vMode == VerifyGate.METHOD_DELAY) {
+                        Row(
+                            Modifier.padding(start = 40.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(onClick = {
+                                vDelay = (((vDelay.toIntOrNull() ?: 5) - 5).coerceAtLeast(5)).toString()
+                            }) { Text("−") }
+                            Text(
+                                "${vDelay.toIntOrNull() ?: 5} 秒",
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.padding(horizontal = 12.dp)
+                            )
+                            TextButton(onClick = {
+                                vDelay = (((vDelay.toIntOrNull() ?: 5) + 5).coerceAtMost(600)).toString()
+                            }) { Text("＋") }
+                        }
+                    }
+                    VerifyModeRow(
+                        selected = vMode == VerifyGate.METHOD_QUIZ,
+                        title = "答对一道口算题",
+                        onClick = { vMode = VerifyGate.METHOD_QUIZ }
+                    )
+                    VerifyModeRow(
+                        selected = vMode == VerifyGate.METHOD_PASSWORD,
+                        title = "输入密码",
+                        onClick = { vMode = VerifyGate.METHOD_PASSWORD }
+                    )
+                    if (vMode == VerifyGate.METHOD_PASSWORD) {
+                        OutlinedTextField(
+                            value = vPwd,
+                            onValueChange = { vPwd = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 40.dp, top = 4.dp, end = 16.dp),
+                            label = { Text(if (vPwd.isBlank()) "留空则使用全局密码" else "该界面专用密码") },
+                            singleLine = true
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = {
+                        AppStore.upsertPreset(
+                            com.activitylock.app.core.ConfigPreset(
+                                id = "",
+                                label = text.ifBlank {
+                                    rule.activityName.substringAfterLast('.')
+                                },
+                                packageName = rule.packageName,
+                                activityName = rule.activityName,
+                                redirectUri = redirect.trim().takeIf { it.isNotBlank() },
+                                note = text.trim(),
+                                builtin = false,
+                            )
+                        )
+                        AppStore.toast("已保存到方案库·我的方案")
+                        editing = null
+                    }) { Text("存为预设（可在方案库复用/导出）") }
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
                     AppStore.updateNote(rule.packageName, rule.activityName, text)
+                    AppStore.updateRedirect(rule.packageName, rule.activityName, redirect)
+                    AppStore.updateVerify(
+                        rule.packageName, rule.activityName,
+                        vMode, vDelay.trim().toIntOrNull(), vPwd
+                    )
+                    AppStore.updateQuota(rule.packageName, rule.activityName, quota.trim().toIntOrNull())
+                    // 跳转目标/超额状态影响 Watcher 规则，立即同步；限额需要守护服务
+                    AmsController.writeRules()
+                    com.activitylock.app.core.QuotaService.startIfQuotaConfigured(ctx)
                     editing = null
                 }) { Text("保存") }
             },

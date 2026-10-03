@@ -27,6 +27,11 @@ import com.activitylock.app.ui.screens.ConnectionScreen
 import com.activitylock.app.ui.screens.FavoritesScreen
 import com.activitylock.app.ui.screens.HistoryScreen
 import com.activitylock.app.ui.screens.InspectorScreen
+import com.activitylock.app.ui.screens.PresetScreen
+import com.activitylock.app.ui.screens.QuotaScreen
+import com.activitylock.app.ui.screens.ScheduleScreen
+import com.activitylock.app.ui.screens.SceneScreen
+import com.activitylock.app.ui.screens.StatsScreen
 import com.activitylock.app.ui.screens.SchemeLibraryScreen
 import com.activitylock.app.ui.screens.SettingsScreen
 import com.activitylock.app.ui.theme.ActivityLockTheme
@@ -40,6 +45,11 @@ sealed interface Screen {
     data object Inspector : Screen
     data object History : Screen
     data object Verify : Screen
+    data object Presets : Screen
+    data object Schedules : Screen
+    data object Quota : Screen
+    data object Scenes : Screen
+    data object Stats : Screen
     data class Detail(val packageName: String) : Screen
 }
 
@@ -115,7 +125,12 @@ private fun AppRoot() {
                     onOpenInspector = { stack.add(Screen.Inspector) },
                     onOpenSchemes = { stack.add(Screen.SchemeLibrary) },
                     onOpenHistory = { stack.add(Screen.History) },
-                    onOpenVerify = { stack.add(Screen.Verify) }
+                    onOpenVerify = { stack.add(Screen.Verify) },
+                    onOpenPresets = { stack.add(Screen.Presets) },
+                    onOpenSchedules = { stack.add(Screen.Schedules) },
+                    onOpenQuota = { stack.add(Screen.Quota) },
+                    onOpenScenes = { stack.add(Screen.Scenes) },
+                    onOpenStats = { stack.add(Screen.Stats) }
                 )
                 Screen.Verify -> com.activitylock.app.ui.screens.VerifySettingsScreen(
                     onBack = { stack.removeAt(stack.size - 1) }
@@ -127,6 +142,21 @@ private fun AppRoot() {
                     onBack = { stack.removeAt(stack.size - 1) }
                 )
                 Screen.SchemeLibrary -> SchemeLibraryScreen(
+                    onBack = { stack.removeAt(stack.size - 1) }
+                )
+                Screen.Presets -> PresetScreen(
+                    onBack = { stack.removeAt(stack.size - 1) }
+                )
+                Screen.Schedules -> ScheduleScreen(
+                    onBack = { stack.removeAt(stack.size - 1) }
+                )
+                Screen.Quota -> QuotaScreen(
+                    onBack = { stack.removeAt(stack.size - 1) }
+                )
+                Screen.Scenes -> SceneScreen(
+                    onBack = { stack.removeAt(stack.size - 1) }
+                )
+                Screen.Stats -> StatsScreen(
                     onBack = { stack.removeAt(stack.size - 1) }
                 )
                 Screen.Connection -> ConnectionScreen(

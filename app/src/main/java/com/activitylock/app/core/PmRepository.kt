@@ -29,7 +29,8 @@ object PmRepository {
         val packages = pm.getInstalledPackages(PackageManager.GET_ACTIVITIES)
         for (info in packages) {
             val pkg = info.packageName ?: continue
-            val label = runCatching { pm.getApplicationLabel(info.applicationInfo).toString() }.getOrDefault(pkg)
+            // compileSdk 36 起 ApplicationInfo 为可空类型
+            val label = runCatching { pm.getApplicationLabel(info.applicationInfo!!).toString() }.getOrDefault(pkg)
             val launcherCls = pm.getLaunchIntentForPackage(pkg)?.component?.className
             val acts = info.activities
                 ?.filter { it != null && it.name != null }

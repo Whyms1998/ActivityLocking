@@ -1,14 +1,20 @@
 package com.activitylock.app.ui.screens
 
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -20,17 +26,20 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.activitylock.app.core.AppStore
 import com.activitylock.app.core.LockEngine
+import com.activitylock.app.core.SchemePresets
 import com.activitylock.app.ui.components.AppIcon
 import kotlinx.coroutines.launch
 
 /**
  * 单个 Activity 行：显示状态开关。锁定成功后自动加入收藏夹。
- * 组件禁用受系统限制时自动降级为拦截模式。
+ * 组件禁用受系统限制时自动降级为拦截模式；
+ * 锁定桌面入口时可选择"拦截后跳转搜索页"。
  */
 @Composable
 fun ActivityToggleRow(
@@ -43,21 +52,34 @@ fun ActivityToggleRow(
 ) {
     val key = "$packageName/$cls"
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var busy by remember(key) { mutableStateOf(false) }
     var locked by remember(key) { mutableStateOf(AppStore.isDisabled(packageName, cls)) }
     var mode by remember(key) { mutableStateOf("pm") }
+    var redirect by remember(key) {
+        mutableStateOf(
+            AppStore.rules.firstOrNull { it.packageName == packageName && it.activityName == cls }?.redirectUri
+        )
+    }
     var confirmLock by remember { mutableStateOf(false) }
 
-    fun doApply(wantLock: Boolean) {
+    fun doApply(wantLock: Boolean, redirectUri: String? = null) {
         busy = true
         scope.launch {
-            val o = LockEngine.apply(packageName, cls, wantLock)
+            val o = LockEngine.apply(packageName, cls, wantLock, redirectUri)
             if (o.locked) {
                 locked = true
                 mode = o.mode
+                // 重锁已带跳转的规则时无需传参，从规则读实际生效的跳转目标
+                redirect = AppStore.rules
+                    .firstOrNull { it.packageName == packageName && it.activityName == cls }
+                    ?.redirectUri
                 AppStore.toast(
-                    if (o.mode == "block") "已改用拦截模式：该界面打开时自动退出"
-                    else "锁定完成（组件已禁用）"
+                    when {
+                        o.mode == "block" && redirect != null -> "已锁定：点桌面图标将直达搜索页"
+                        o.mode == "block" -> "已改用拦截模式：该界面打开时自动退出"
+                        else -> "锁定完成（组件已禁用）"
+                    }
                 )
             } else {
                 locked = AppStore.isDisabled(packageName, cls)
@@ -106,6 +128,7 @@ fun ActivityToggleRow(
                 )
                 Text(
                     when {
+                        locked && mode == "block" && redirect != null -> "🚫 拦截模式 · 点图标直达搜索页"
                         locked && mode == "block" -> "🚫 拦截模式（启动即拦截）"
                         locked -> "🔒 已禁用"
                         else -> "正常"
@@ -119,7 +142,7 @@ fun ActivityToggleRow(
                 checked = locked,
                 enabled = !busy,
                 onCheckedChange = { wantLock ->
-                    if (wantLock && isLauncher && !locked) {
+                    if (wantLock && !locked) {
                         confirmLock = true
                     } else {
                         doApply(wantLock)
@@ -130,27 +153,147 @@ fun ActivityToggleRow(
     }
 
     if (confirmLock) {
-        AlertDialog(
-            onDismissRequest = { confirmLock = false },
-            title = { Text("确认锁定桌面入口？") },
-            text = {
-                Text(
-                    "该界面是应用在桌面上的主入口。锁定后：\n\n" +
-                        "· 桌面图标可能会消失\n" +
-                        "· 无法再从桌面直接打开该应用\n" +
-                        "· 应用内其他功能不受影响\n\n" +
-                        "之后可以随时在本 App 的收藏夹中解除锁定。"
-                )
+        LockLauncherDialog(
+            packageName = packageName,
+            isLauncher = isLauncher,
+            onConfirm = { redirectUri ->
+                confirmLock = false
+                doApply(true, redirectUri)
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmLock = false
-                    doApply(true)
-                }) { Text("仍然锁定") }
+            onTest = { uri ->
+                runCatching {
+                    val intent = if (uri.contains("://")) {
+                        Intent(Intent.ACTION_VIEW, Uri.parse(uri))
+                    } else if (uri.contains('/')) {
+                        Intent().setComponent(
+                            android.content.ComponentName.unflattenFromString(uri)
+                                ?: error("组件名格式无效")
+                        )
+                    } else {
+                        Intent().setComponent(android.content.ComponentName(packageName, uri))
+                    }
+                    context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }.onFailure { AppStore.toast("无法打开：${it.message}") }
             },
-            dismissButton = {
-                TextButton(onClick = { confirmLock = false }) { Text("取消") }
-            }
+            onDismiss = { confirmLock = false }
         )
     }
+}
+
+/**
+ * 校验跳转目标可否被拦截器（shell 身份）拉起：
+ * 深链需本机有响应应用；类名/组件名要求 exported，未导出的界面 shell 无法启动。
+ * 返回警告文案，null 表示可用。
+ */
+private fun validateRedirectTarget(context: android.content.Context, pkg: String, target: String): String? {
+    if (target.isBlank()) return null
+    val pm = context.packageManager
+    if (target.contains("://")) {
+        val handled = runCatching {
+            pm.resolveActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target)), 0) != null
+        }.getOrDefault(false)
+        return if (handled) null else "本机没有应用响应此深链，请先用「测试跳转」确认"
+    }
+    val cn = if (target.contains('/')) {
+        android.content.ComponentName.unflattenFromString(target)
+            ?: return "组件名格式无效，应为 包名/完整类名"
+    } else {
+        android.content.ComponentName(pkg, target)
+    }
+    val info = runCatching { pm.getActivityInfo(cn, 0) }.getOrNull()
+        ?: return "找不到该界面，请确认类名是否正确"
+    return if (info.exported) null
+    else "该界面未导出（exported=false），拦截器无法拉起；请改用搜索页深链（推荐）或已导出的界面"
+}
+
+/** 锁定确认：选择"拦截后跳转指定页"或"仅拦截"。任意界面锁定时均弹出。 */
+@Composable
+private fun LockLauncherDialog(
+    packageName: String,
+    isLauncher: Boolean,
+    onConfirm: (String?) -> Unit,
+    onTest: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val suggestions = remember(packageName) { SchemePresets.suggestFor(packageName) }
+    // 桌面入口默认推荐跳转；普通界面有预设建议时也默认跳转，否则默认仅拦截
+    var redirectMode by remember { mutableStateOf(isLauncher || suggestions.isNotEmpty()) }
+    var uri by remember { mutableStateOf(if (redirectMode) suggestions.firstOrNull()?.uri ?: "" else "") }
+    val redirectUri = if (redirectMode) uri.trim().takeIf { it.isNotBlank() } else null
+    val context = LocalContext.current
+    // 校验跳转目标：未导出的界面 shell 拉不起来，必须用深链
+    val warning = remember(uri, packageName) { validateRedirectTarget(context, packageName, uri.trim()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (isLauncher) "锁定桌面入口" else "锁定该界面") },
+        text = {
+            Column {
+                Text(
+                    if (isLauncher) "锁定后从桌面点击该 App：" else "锁定后该界面被打开时：",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = redirectMode, onClick = { redirectMode = true })
+                    Text("跳转到指定页面", style = MaterialTheme.typography.bodyMedium)
+                }
+                if (redirectMode) {
+                    OutlinedTextField(
+                        value = uri,
+                        onValueChange = { uri = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.small,
+                        label = { Text("跳转目标") },
+                        placeholder = { Text("深链 xhsdiscover://search 或界面类名") },
+                        singleLine = true
+                    )
+                    warning?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                    if (suggestions.isNotEmpty()) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                        ) {
+                            suggestions.forEach { p ->
+                                TextButton(onClick = { uri = p.uri }) { Text(p.name) }
+                                Spacer(Modifier.width(4.dp))
+                            }
+                        }
+                    }
+                    Row {
+                        TextButton(
+                            onClick = { if (uri.isNotBlank()) onTest(uri.trim()) },
+                            enabled = uri.isNotBlank()
+                        ) { Text("测试跳转") }
+                        Text(
+                            "组件保持启用，由系统级拦截生效",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .weight(1f)
+                                .align(Alignment.CenterVertically)
+                        )
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = !redirectMode, onClick = { redirectMode = false })
+                    Text("仅拦截（打开无反应）", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(redirectUri) }) { Text("锁定") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
 }

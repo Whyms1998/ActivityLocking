@@ -163,6 +163,15 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                         Spacer(Modifier.height(8.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             RadioButton(
+                                selected = method == VerifyGate.METHOD_QUIZ,
+                                onClick = {
+                                    requireVerify { method = VerifyGate.METHOD_QUIZ; persist() }
+                                }
+                            )
+                            Text("答对一道口算题")
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
                                 selected = method == VerifyGate.METHOD_PASSWORD,
                                 onClick = {
                                     requireVerify { method = VerifyGate.METHOD_PASSWORD; persist() }
@@ -192,8 +201,9 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
 
             Spacer(Modifier.height(16.dp))
             Text(
-                "验证在收藏夹解锁和磁贴「全部解锁」时生效；锁定操作不受影响。\n" +
-                    "验证开启时，关闭验证或修改验证方式也需要先通过当前验证。",
+                "验证在收藏夹解锁、删除和磁贴「全部解锁」时生效；锁定操作不受影响。\n" +
+                    "每个界面可以在收藏夹「编辑」里单独设置解锁条件（无需验证 / 等待倒计时 / 专属密码），" +
+                    "单独设置优先于全局；磁贴全部解锁会取所有界面的最强条件。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

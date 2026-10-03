@@ -7,19 +7,21 @@ plugins {
 
 android {
     namespace = "com.activitylock.app"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.activitylock.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 11
+        versionName = "0.9.1"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            // 用 debug 签名出 release 包：Compose 关闭调试插桩，列表滑动明显更流畅
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     compileOptions {
@@ -48,6 +50,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.5")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.2")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")

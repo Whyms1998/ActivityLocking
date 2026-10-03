@@ -23,6 +23,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,7 +37,7 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun AppsScreen(onOpenDetail: (String) -> Unit) {
-    var query by remember { mutableStateOf("") }
+    var query by rememberSaveable { mutableStateOf("") }
     val apps = AppStore.apps
     val loading = AppStore.appsLoading
     val q = query.trim().lowercase()
@@ -80,13 +81,17 @@ fun AppsScreen(onOpenDetail: (String) -> Unit) {
             }
         } else {
             // 搜索模式：跨所有 App 直接匹配界面类名 + App 名称
-            val matchedActivities = apps.flatMap { app ->
-                app.activities.filter { act ->
-                    act.cls.lowercase().contains(q)
-                }.map { app to it }
+            val matchedActivities = remember(apps, q) {
+                apps.flatMap { app ->
+                    app.activities.filter { act ->
+                        act.cls.lowercase().contains(q)
+                    }.map { app to it }
+                }
             }
-            val matchedApps = apps.filter {
-                it.label.lowercase().contains(q) || it.packageName.lowercase().contains(q)
+            val matchedApps = remember(apps, q) {
+                apps.filter {
+                    it.label.lowercase().contains(q) || it.packageName.lowercase().contains(q)
+                }
             }
             LazyColumn(Modifier.fillMaxSize()) {
                 if (matchedActivities.isNotEmpty()) {

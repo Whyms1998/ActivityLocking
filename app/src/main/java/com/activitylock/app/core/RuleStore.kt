@@ -12,6 +12,14 @@ data class LockRule(
     val note: String = "",
     val block: Boolean = false,
     val locked: Boolean = true,
+    /** 拦截后跳转的深链（如搜索页 xhsdiscover://search），null 表示仅拦截不跳转。 */
+    val redirectUri: String? = null,
+    /** 解锁条件：null=跟随全局；"none"=无需验证；"delay"=等待；"password"=密码 */
+    val verifyMode: String? = null,
+    val verifyDelaySec: Int? = null,
+    val verifyPassword: String? = null,
+    /** 每日使用限额（分钟），null=不限额。按 App（包名）生效，同一包取最大值。 */
+    val quotaMin: Int? = null,
     val createdAt: Long = System.currentTimeMillis(),
 )
 
@@ -68,6 +76,40 @@ class RuleStore(filesDir: File) {
     fun updateLocked(pkg: String, cls: String, locked: Boolean) {
         _rules.value = _rules.value.map {
             if (it.packageName == pkg && it.activityName == cls) it.copy(locked = locked) else it
+        }
+        save()
+    }
+
+    fun updateRedirect(pkg: String, cls: String, uri: String?) {
+        val clean = uri?.trim()?.takeIf { it.isNotBlank() }
+        _rules.value = _rules.value.map {
+            if (it.packageName == pkg && it.activityName == cls) it.copy(redirectUri = clean) else it
+        }
+        save()
+    }
+
+    /** 设置单条规则的解锁条件。mode=null 表示跟随全局。 */
+    fun updateVerify(pkg: String, cls: String, mode: String?, delaySec: Int?, password: String?) {
+        val validMode = when (mode) {
+            VerifyGate.MODE_NONE, VerifyGate.METHOD_DELAY, VerifyGate.METHOD_PASSWORD, VerifyGate.METHOD_QUIZ -> mode
+            else -> null
+        }
+        _rules.value = _rules.value.map {
+            if (it.packageName == pkg && it.activityName == cls) it.copy(
+                verifyMode = validMode,
+                verifyDelaySec = if (validMode == VerifyGate.METHOD_DELAY) delaySec?.coerceIn(1, 600) else null,
+                verifyPassword = if (validMode == VerifyGate.METHOD_PASSWORD) password?.trim()?.takeIf { s -> s.isNotBlank() } else null,
+            ) else it
+        }
+        save()
+    }
+
+    /** 设置单条规则的每日限额（分钟）。min=null 表示不限额。 */
+    fun updateQuota(pkg: String, cls: String, min: Int?) {
+        _rules.value = _rules.value.map {
+            if (it.packageName == pkg && it.activityName == cls) it.copy(
+                quotaMin = min?.coerceIn(1, 1440)
+            ) else it
         }
         save()
     }
