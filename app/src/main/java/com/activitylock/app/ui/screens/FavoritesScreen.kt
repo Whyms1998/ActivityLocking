@@ -1,9 +1,9 @@
 package com.activitylock.app.ui.screens
 
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
@@ -36,7 +35,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -52,13 +50,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.activitylock.app.core.AmsController
 import com.activitylock.app.core.AppStore
-import com.activitylock.app.core.SceneEngine
-import com.activitylock.app.core.Scene
 import com.activitylock.app.core.BlockStats
 import com.activitylock.app.core.ConfigPreset
 import com.activitylock.app.core.LockEngine
 import com.activitylock.app.core.LockOutcome
 import com.activitylock.app.core.LockRule
+import com.activitylock.app.core.Scene
+import com.activitylock.app.core.SceneEngine
 import com.activitylock.app.core.VerifyGate
 import com.activitylock.app.ui.components.AppIcon
 import com.activitylock.app.ui.components.UnlockVerifyDialog
@@ -110,7 +108,7 @@ private fun GroupHeader(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            androidx.compose.material3.Text(
+            Text(
                 if (expanded) "收起" else "展开",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -126,6 +124,9 @@ private fun GroupHeader(
     }
 }
 
+/**
+ * 工作台（原收藏夹）：状态仪表 + 场景一键切换 + 搜索直达 + 规则分组列表。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FavoritesScreen(
@@ -139,46 +140,20 @@ fun FavoritesScreen(
     val actual = remember { mutableStateMapOf<String, Boolean>() }
     val busy = remember { mutableStateMapOf<String, Boolean>() }
     val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
     var editing by remember { mutableStateOf<LockRule?>(null) }
     var refreshTick by remember { mutableStateOf(0) }
-    val ctx = LocalContext.current
     var deleting by remember { mutableStateOf<LockRule?>(null) }
     var pendingUnlock by remember { mutableStateOf<LockRule?>(null) }
     var pendingDelete by remember { mutableStateOf<LockRule?>(null) }
+    var pendingSceneDeactivate by remember { mutableStateOf<Scene?>(null) }
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
     var sceneBusy by remember { mutableStateOf(false) }
-    var pendingSceneDeactivate by remember { mutableStateOf<Scene?>(null) }
     var todayBlocked by remember { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(refreshTick) {
         todayBlocked = withContext(Dispatchers.IO) {
             runCatching { BlockStats.read()?.today }.getOrNull()
-        }
-    }
-
-    fun toggleScene(scene: Scene) {
-        if (sceneBusy) return
-        if (!scene.active) {
-            sceneBusy = true
-            scope.launch {
-                val n = SceneEngine.activate(scene)
-                AppStore.upsertScene(scene.copy(active = true))
-                AppStore.toast("「" + scene.label.ifBlank { "场景" } + "」已启用 " + n + " 个应用")
-                sceneBusy = false
-            }
-        } else {
-            val req = SceneEngine.deactivateRequirement(ctx, scene)
-            if (req.isNone) {
-                sceneBusy = true
-                scope.launch {
-                    val n = SceneEngine.deactivate(scene)
-                    AppStore.upsertScene(scene.copy(active = false))
-                    AppStore.toast("场景已停用，" + n + " 个界面解锁")
-                    sceneBusy = false
-                }
-            } else {
-                pendingSceneDeactivate = scene
-            }
         }
     }
 
@@ -199,6 +174,32 @@ fun FavoritesScreen(
             o.locked && o.mode == "pm" -> AppStore.toast("锁定完成（组件已禁用）")
             o.locked && o.mode == "block" -> AppStore.toast("已启用拦截：该界面将无法启动")
             else -> AppStore.toast("已解锁（条目保留，可随时再锁定）")
+        }
+    }
+
+    fun toggleScene(scene: Scene) {
+        if (sceneBusy) return
+        if (!scene.active) {
+            sceneBusy = true
+            scope.launch {
+                val n = SceneEngine.activate(scene)
+                AppStore.upsertScene(scene.copy(active = true))
+                AppStore.toast("「${scene.label.ifBlank { "场景" }}」已启用 $n 个应用")
+                sceneBusy = false
+            }
+        } else {
+            val req = SceneEngine.deactivateRequirement(ctx, scene)
+            if (req.isNone) {
+                sceneBusy = true
+                scope.launch {
+                    val n = SceneEngine.deactivate(scene)
+                    AppStore.upsertScene(scene.copy(active = false))
+                    AppStore.toast("场景已停用，$n 个界面解锁")
+                    sceneBusy = false
+                }
+            } else {
+                pendingSceneDeactivate = scene
+            }
         }
     }
 
@@ -241,7 +242,7 @@ fun FavoritesScreen(
                 Text("还没有收藏任何界面", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "去「应用」页找到目标 App，选择要锁定的界面。\n锁定的界面会自动出现在这里。",
+                    "去「应用」页找到目标 App，选择要锁定的界面；也可以到「方案库」一键配置常用 App。\n锁定的界面会自动出现在这里。",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -265,136 +266,138 @@ fun FavoritesScreen(
                     }
                     if (expanded[pkg] != false) {
                         items(groupRules, key = { key(it) }) { rule ->
-                    val key = "${rule.packageName}/${rule.activityName}"
-                    // block 模式以规则里的 locked 为准；pm 模式以系统实际状态为准
-                    val pmDisabled = !rule.block && (actual[key] ?: false)
-                    val locked = if (rule.block) rule.locked else pmDisabled
-                    Card(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 5.dp)
-                    ) {
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            AppIcon(rule.packageName, 42.dp)
-                            Spacer(Modifier.width(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    rule.note.ifBlank { rule.activityName.substringAfterLast('.') },
-                                    style = MaterialTheme.typography.titleSmall,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    rule.activityName,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    androidx.compose.material3.Surface(
-                                        shape = MaterialTheme.shapes.extraSmall,
-                                        color = if (locked) MaterialTheme.colorScheme.primaryContainer
-                                        else MaterialTheme.colorScheme.surfaceVariant
-                                    ) {
+                            val ruleKey = key(rule)
+                            // block 模式以规则里的 locked 为准；pm 模式以系统实际状态为准
+                            val pmDisabled = !rule.block && (actual[ruleKey] ?: false)
+                            val locked = if (rule.block) rule.locked else pmDisabled
+                            Card(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 5.dp)
+                            ) {
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    AppIcon(rule.packageName, 42.dp)
+                                    Spacer(Modifier.width(12.dp))
+                                    Column(Modifier.weight(1f)) {
                                         Text(
-                                            when {
-                                                rule.block && locked -> "拦截中"
-                                                rule.block -> "已暂停"
-                                                pmDisabled -> "已锁定"
-                                                else -> "未锁定"
-                                            },
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = if (locked) MaterialTheme.colorScheme.onPrimaryContainer
-                                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                            rule.note.ifBlank { rule.activityName.substringAfterLast('.') },
+                                            style = MaterialTheme.typography.titleSmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
+                                        Text(
+                                            rule.activityName,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            androidx.compose.material3.Surface(
+                                                shape = MaterialTheme.shapes.extraSmall,
+                                                color = if (locked) MaterialTheme.colorScheme.primaryContainer
+                                                else MaterialTheme.colorScheme.surfaceVariant
+                                            ) {
+                                                Text(
+                                                    when {
+                                                        rule.block && locked -> "拦截中"
+                                                        rule.block -> "已暂停"
+                                                        pmDisabled -> "已锁定"
+                                                        else -> "未锁定"
+                                                    },
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    color = if (locked) MaterialTheme.colorScheme.onPrimaryContainer
+                                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                                )
+                                            }
+                                            if (!rule.block && rule.locked && !pmDisabled) {
+                                                Spacer(Modifier.width(8.dp))
+                                                AssistChip(
+                                                    onClick = {
+                                                        busy[ruleKey] = true
+                                                        scope.launch {
+                                                            onOutcome(LockEngine.apply(rule.packageName, rule.activityName, true, rule.redirectUri))
+                                                            refresh()
+                                                            busy[ruleKey] = false
+                                                        }
+                                                    },
+                                                    label = { Text("修复", style = MaterialTheme.typography.labelSmall) }
+                                                )
+                                            }
+                                        }
+                                        rule.redirectUri?.let { uri ->
+                                            Spacer(Modifier.height(4.dp))
+                                            Text(
+                                                "↗ 跳转：$uri",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontFamily = FontFamily.Monospace,
+                                                color = MaterialTheme.colorScheme.tertiary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        rule.verifyMode?.let { mode ->
+                                            Spacer(Modifier.height(2.dp))
+                                            Text(
+                                                "🔓 解锁条件：" + when (mode) {
+                                                    VerifyGate.MODE_NONE -> "无需验证"
+                                                    VerifyGate.METHOD_DELAY -> "等待 ${(rule.verifyDelaySec ?: VerifyGate.delaySeconds(ctx))} 秒"
+                                                    VerifyGate.METHOD_PASSWORD -> "输入密码"
+                                                    VerifyGate.METHOD_QUIZ -> "答题"
+                                                    else -> "跟随全局"
+                                                },
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.tertiary
+                                            )
+                                        }
                                     }
-                                    if (!rule.block && rule.locked && !pmDisabled) {
-                                        Spacer(Modifier.width(8.dp))
-                                        AssistChip(
-                                            onClick = {
-                                                busy[key] = true
+                                    IconButton(onClick = { editing = rule }) {
+                                        Icon(Icons.Default.Edit, contentDescription = "备注")
+                                    }
+                                    IconButton(onClick = {
+                                        // 删除"锁定中"的条目同样触发该界面的解锁条件，防止绕过
+                                        if (locked && !VerifyGate.requirementFor(ctx, rule).isNone) {
+                                            pendingDelete = rule
+                                        } else {
+                                            deleting = rule
+                                        }
+                                    }) {
+                                        Icon(Icons.Default.Delete, contentDescription = "删除条目")
+                                    }
+                                    Switch(
+                                        checked = locked,
+                                        enabled = busy[ruleKey] != true,
+                                        onCheckedChange = { wantLock ->
+                                            if (wantLock) {
+                                                busy[ruleKey] = true
                                                 scope.launch {
                                                     onOutcome(LockEngine.apply(rule.packageName, rule.activityName, true, rule.redirectUri))
                                                     refresh()
-                                                    busy[key] = false
+                                                    busy[ruleKey] = false
                                                 }
-                                            },
-                                            label = { Text("修复", style = MaterialTheme.typography.labelSmall) }
-                                        )
-                                    }
-                                }
-                                rule.redirectUri?.let { uri ->
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(
-                                        "↗ 跳转：$uri",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = MaterialTheme.colorScheme.tertiary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                rule.verifyMode?.let { mode ->
-                                    Spacer(Modifier.height(2.dp))
-                                    Text(
-                                        "🔓 解锁条件：" + when (mode) {
-                                            VerifyGate.MODE_NONE -> "无需验证"
-                                            VerifyGate.METHOD_DELAY -> "等待 ${(rule.verifyDelaySec ?: VerifyGate.delaySeconds(ctx))} 秒"
-                                            VerifyGate.METHOD_PASSWORD -> "输入密码"
-                                            else -> "跟随全局"
-                                        },
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.tertiary
+                                            } else if (!VerifyGate.requirementFor(ctx, rule).isNone) {
+                                                // 自律模式：按该界面的解锁条件验证
+                                                pendingUnlock = rule
+                                            } else {
+                                                busy[ruleKey] = true
+                                                scope.launch {
+                                                    onOutcome(LockEngine.apply(rule.packageName, rule.activityName, false))
+                                                    refresh()
+                                                    busy[ruleKey] = false
+                                                }
+                                            }
+                                        }
                                     )
                                 }
                             }
-                            IconButton(onClick = { editing = rule }) {
-                                Icon(Icons.Default.Edit, contentDescription = "备注")
-                            }
-                            IconButton(onClick = {
-                                // 删除"锁定中"的条目同样触发该界面的解锁条件，防止绕过
-                                if (locked && !VerifyGate.requirementFor(ctx, rule).isNone) {
-                                    pendingDelete = rule
-                                } else {
-                                    deleting = rule
-                                }
-                            }) {
-                                Icon(Icons.Default.Delete, contentDescription = "删除条目")
-                            }
-                            Switch(
-                                checked = locked,
-                                enabled = busy[key] != true,
-                                onCheckedChange = { wantLock ->
-                                    if (wantLock) {
-                                        busy[key] = true
-                                        scope.launch {
-                                            onOutcome(LockEngine.apply(rule.packageName, rule.activityName, true, rule.redirectUri))
-                                            refresh()
-                                            busy[key] = false
-                                        }
-                                    } else if (!VerifyGate.requirementFor(ctx, rule).isNone) {
-                                        // 自律模式：按该界面的解锁条件验证
-                                        pendingUnlock = rule
-                                    } else {
-                                        busy[key] = true
-                                        scope.launch {
-                                            onOutcome(LockEngine.apply(rule.packageName, rule.activityName, false))
-                                            refresh()
-                                            busy[key] = false
-                                        }
-                                    }
-                                }
-                            )
                         }
-                    }
                     }
                 }
                 item(key = "tail_add") {
@@ -406,7 +409,6 @@ fun FavoritesScreen(
             }
         }
     }
-            }
 
     pendingSceneDeactivate?.let { scene ->
         UnlockVerifyDialog(
@@ -419,7 +421,7 @@ fun FavoritesScreen(
                 scope.launch {
                     val n = SceneEngine.deactivate(scene)
                     AppStore.upsertScene(scene.copy(active = false))
-                    AppStore.toast("场景已停用，" + n + " 个界面解锁")
+                    AppStore.toast("场景已停用，$n 个界面解锁")
                     sceneBusy = false
                 }
             },
@@ -674,7 +676,7 @@ private fun QuickPanel(
     val ctx = LocalContext.current
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
         Text(
-            "已锁定 " + lockedCount + " 个界面" + (todayBlocked?.let { " · 今日拦截 " + it + " 次" } ?: ""),
+            "已锁定 $lockedCount 个界面" + (todayBlocked?.let { " · 今日拦截 $it 次" } ?: ""),
             style = MaterialTheme.typography.labelLarge.copy(fontFeatureSettings = "tnum"),
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -708,7 +710,7 @@ private fun QuickPanel(
                                         Intent(Intent.ACTION_VIEW, Uri.parse(preset.redirectUri))
                                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                     )
-                                }.onFailure { AppStore.toast("无法打开：" + it.message) }
+                                }.onFailure { AppStore.toast("无法打开：${it.message}") }
                             }
                     ) {
                         Column(
