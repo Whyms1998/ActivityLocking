@@ -65,6 +65,7 @@ fun SettingsScreen(
     onOpenStats: () -> Unit,
     onOpenFocus: () -> Unit,
     onOpenAdmin: () -> Unit,
+    onOpenStrength: () -> Unit,
 ) {
     var status by remember { mutableStateOf(shizukuStatusText()) }
     var tick by remember { mutableStateOf(0) }
@@ -87,6 +88,12 @@ fun SettingsScreen(
         )
 
         SettingsGroup("核心功能")
+        SettingsEntry(
+            icon = Icons.Default.Build,
+            title = "锁定强度",
+            subtitle = "临时解锁时长与次数、计划内禁用豁免",
+            onClick = onOpenStrength
+        )
         SettingsEntry(
             icon = Icons.Default.Star,
             title = "方案库",

@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -63,6 +64,8 @@ import com.activitylock.app.core.ConfigPreset
 import com.activitylock.app.core.LockEngine
 import com.activitylock.app.core.LockOutcome
 import com.activitylock.app.core.LockRule
+import com.activitylock.app.core.FocusEngine
+import com.activitylock.app.core.FocusState
 import com.activitylock.app.core.Scene
 import com.activitylock.app.core.SceneEngine
 import com.activitylock.app.core.UnlockExemptions
@@ -161,13 +164,37 @@ fun FavoritesScreen(
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
     var sceneBusy by remember { mutableStateOf(false) }
     var todayBlocked by remember { mutableStateOf<Int?>(null) }
+    var lastFocusCfg by remember { mutableStateOf<com.activitylock.app.core.FocusState.LastConfig?>(null) }
+    var lastEarlyEnd by remember { mutableStateOf(0L) }
+    var focusStarting by remember { mutableStateOf(false) }
+
+    LaunchedEffect(refreshTick) {
+        lastFocusCfg = FocusState.lastConfig(ctx)
+        lastEarlyEnd = FocusState.lastEarlyEnd(ctx)
+    }
+
+    fun startLastFocus() {
+        val cfg = lastFocusCfg ?: return
+        focusStarting = true
+        scope.launch {
+            val err = FocusEngine.start(ctx, cfg.mode, cfg.members.toSet(), cfg.durationMin, cfg.strict)
+            AppStore.toast(if (err == null) "专注开始，共 " + cfg.durationMin + " 分钟" else err ?: "")
+            refreshTick++
+            focusStarting = false
+        }
+    }
     val uiPrefs = ctx.getSharedPreferences("ui_state", Context.MODE_PRIVATE)
     var gridView by remember { mutableStateOf(uiPrefs.getBoolean("workbench_grid", true)) }
+
+    var focusActive by remember { mutableStateOf(false) }
 
     LaunchedEffect(refreshTick) {
         todayBlocked = withContext(Dispatchers.IO) {
             runCatching { BlockStats.read()?.today }.getOrNull()
         }
+        FocusState.load(ctx)?.let { focusActive = true } ?: run { focusActive = false }
+        lastFocusCfg = FocusState.lastConfig(ctx)
+        lastEarlyEnd = FocusState.lastEarlyEnd(ctx)
     }
 
     fun refresh() {
@@ -277,6 +304,35 @@ fun FavoritesScreen(
             onOpenFocus = onOpenFocus,
         )
 
+        // 一键专注 + 破功回流
+        val focusCfg = lastFocusCfg
+        if (!focusActive && focusCfg != null) {
+            Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                    val earlyAgo = lastEarlyEnd.takeIf { it > 0 }
+                        ?.let { ((System.currentTimeMillis() - it) / 3600_000L).toInt() }
+                    if (earlyAgo != null && earlyAgo < 48) {
+                        Text(
+                            "上次专注提前结束了——没关系，重新开始一次？",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                        Spacer(Modifier.height(6.dp))
+                    }
+                    Button(
+                        onClick = { startLastFocus() },
+                        enabled = !focusStarting && !sceneBusy,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            if (focusStarting) "启动中…"
+                            else "▶ 开始专注 " + focusCfg.durationMin + " 分钟（上次配置）"
+                        )
+                    }
+                }
+            }
+        }
+
         if (rules.isEmpty()) {
             Column(
                 Modifier
@@ -324,11 +380,20 @@ fun FavoritesScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                        val exemptMin = com.activitylock.app.core.UnlockExemptions.active(ctx)[pkg]
+                            ?.let { ((it - System.currentTimeMillis()) / 60000L).toInt() }
                         Text(
-                            if (locked == total) "🔒 $total" else "$locked/$total",
+                            when {
+                                exemptMin != null && exemptMin > 0 -> "🔓 临时解锁 " + exemptMin + "分"
+                                locked == total -> "🔒 " + total
+                                else -> "" + locked + "/" + total
+                            },
                             style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
-                            color = if (locked == total) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurfaceVariant
+                            color = when {
+                                exemptMin != null && exemptMin > 0 -> MaterialTheme.colorScheme.tertiary
+                                locked == total -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            }
                         )
                     }
                 }
@@ -864,6 +929,10 @@ private fun GridDetailDialog(
                     )
                     Spacer(Modifier.height(8.dp))
                 } else {
+                    val duration = com.activitylock.app.core.LockStrength.tempUnlockMin(ctx)
+                    val dailyMax = com.activitylock.app.core.LockStrength.tempUnlockDailyMax(ctx)
+                    val used = com.activitylock.app.core.LockStrength.tempUnlockUsedToday(ctx, pkg)
+                    val allowed = com.activitylock.app.core.LockStrength.tempUnlockAllowed(ctx, pkg)
                     var pendingTempUnlock by remember { mutableStateOf(false) }
                     if (pendingTempUnlock) {
                         val memberReq = VerifyGate.bulkRequirement(
@@ -876,19 +945,27 @@ private fun GridDetailDialog(
                         UnlockVerifyDialog(
                             requirement = requirement,
                             title = "临时解锁验证",
-                            hint = "临时解锁 15 分钟后自动恢复拦截",
+                            hint = "临时解锁 " + duration + " 分钟后自动恢复拦截",
                             onConfirmed = {
                                 pendingTempUnlock = false
-                                UnlockExemptions.add(ctx, pkg, System.currentTimeMillis() + 15 * 60_000)
+                                UnlockExemptions.add(ctx, pkg, System.currentTimeMillis() + duration * 60_000L)
+                                com.activitylock.app.core.LockStrength.recordTempUnlock(ctx, pkg)
                                 AmsController.writeRules()
                                 AppStore.toast("已临时解锁至 " +
-                                    java.text.SimpleDateFormat("HH:mm").format(java.util.Date(System.currentTimeMillis() + 15 * 60_000)))
+                                    java.text.SimpleDateFormat("HH:mm").format(java.util.Date(System.currentTimeMillis() + duration * 60_000L)))
                             },
                             onDismiss = { pendingTempUnlock = false }
                         )
                     }
-                    TextButton(onClick = { pendingTempUnlock = true }) {
-                        Text("临时解锁 15 分钟")
+                    TextButton(onClick = { pendingTempUnlock = true }, enabled = allowed) {
+                        Text(if (dailyMax == 0) "临时解锁（已在强度设置中禁用）" else "临时解锁 " + duration + " 分钟")
+                    }
+                    if (!allowed && dailyMax > 0) {
+                        Text(
+                            "今日已用 " + used + "/" + dailyMax + " 次，明天 0 点重置",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                     Spacer(Modifier.height(8.dp))
                 }

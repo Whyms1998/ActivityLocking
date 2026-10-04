@@ -65,12 +65,17 @@ object AmsController {
                 )
             }
             // 临时豁免层：临时解锁期间放行该 App 的所有启动
-            for ((pkg, until) in UnlockExemptions.active(ctx)) {
-                arr.put(
-                    org.json.JSONObject()
-                        .put("e", pkg)
-                        .put("u", until)
-                )
+            // （锁定强度开启"计划窗口内禁用豁免"时，生效中的计划窗口内不发豁免条目）
+            val exemptSuppressed = LockStrength.noExemptInSchedule(ctx) &&
+                ScheduleEngine.anyActive(AppStore.schedules)
+            if (!exemptSuppressed) {
+                for ((pkg, until) in UnlockExemptions.active(ctx)) {
+                    arr.put(
+                        org.json.JSONObject()
+                            .put("e", pkg)
+                            .put("u", until)
+                    )
+                }
             }
             val f = rulesFile()
             f.parentFile?.mkdirs()

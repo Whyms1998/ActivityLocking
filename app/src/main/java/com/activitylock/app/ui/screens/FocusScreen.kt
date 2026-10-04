@@ -60,10 +60,14 @@ import kotlinx.coroutines.delay
 fun FocusScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     var session by remember { mutableStateOf(FocusState.load(ctx)) }
-    var mode by remember { mutableStateOf("selected") }
-    var durationMin by remember { mutableStateOf(25) }
-    var strict by remember { mutableStateOf(true) }
-    var selected by remember { mutableStateOf(setOf<String>()) }
+    val lastCfg = remember { FocusState.lastConfig(ctx) }
+    var mode by remember { mutableStateOf(lastCfg?.mode ?: "selected") }
+    var durationMin by remember { mutableStateOf(lastCfg?.durationMin ?: 25) }
+    var strict by remember { mutableStateOf(lastCfg?.strict ?: true) }
+    var selected by remember { mutableStateOf(lastCfg?.members?.toSet() ?: setOf<String>()) }
+    var codeDialog by remember { mutableStateOf<String?>(null) } // "gen" | "verify"
+    var generatedCode by remember { mutableStateOf("") }
+    var codeInput by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf("") }
     var starting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -190,12 +194,31 @@ fun FocusScreen(onBack: () -> Unit) {
                     TextButton(onClick = { durationMin = (durationMin + 5).coerceAtMost(240) }) { Text("＋") }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Switch(checked = strict, onCheckedChange = { strict = it })
+                    Switch(checked = strict, onCheckedChange = { want ->
+                        when {
+                            want && com.activitylock.app.core.SelfCode.hasCode(ctx) -> {
+                                // 已有自律码：开启无需验证，但保持提示
+                                strict = true
+                            }
+                            want -> {
+                                // 首次开启：生成自律码，展示一次
+                                generatedCode = (100000..999999).random().toString()
+                                codeDialog = "gen"
+                            }
+                            com.activitylock.app.core.SelfCode.hasCode(ctx) -> {
+                                // 关闭严格模式需要自律码
+                                codeInput = ""
+                                codeDialog = "verify"
+                            }
+                            else -> strict = false
+                        }
+                    })
                     Spacer(Modifier.width(8.dp))
                     Column {
                         Text("严格模式", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            "提前结束需通过验证（未配置验证时答题）",
+                            if (com.activitylock.app.core.SelfCode.hasCode(ctx)) "已绑定自律码：关闭需输入"
+                            else "提前结束需通过验证；开启将生成自律码（关闭时需输入）",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

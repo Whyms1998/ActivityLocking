@@ -61,6 +61,37 @@ object FocusState {
         android.util.Log.w("FocusDebug", "focusPackages=" + r)
         return r
     }
+
+    /** 上次会话的配置（一键重复用）。 */
+    @Serializable
+    data class LastConfig(
+        val mode: String,
+        val members: List<String>,
+        val durationMin: Int,
+        val strict: Boolean,
+    )
+
+    private fun configPrefs(ctx: Context) =
+        ctx.getSharedPreferences("focus_last", Context.MODE_PRIVATE)
+
+    fun saveLastConfig(ctx: Context, cfg: LastConfig) {
+        configPrefs(ctx).edit()
+            .putString("cfg", json.encodeToString(cfg))
+            .apply()
+    }
+
+    fun lastConfig(ctx: Context): LastConfig? = runCatching {
+        val raw = configPrefs(ctx).getString("cfg", null) ?: return null
+        json.decodeFromString<LastConfig>(raw)
+    }.getOrNull()
+
+    /** 记录一次提前结束（破功回流用）。 */
+    fun recordEarlyEnd(ctx: Context) {
+        configPrefs(ctx).edit().putLong("last_early_end", System.currentTimeMillis()).apply()
+    }
+
+    fun lastEarlyEnd(ctx: Context): Long =
+        configPrefs(ctx).getLong("last_early_end", 0)
 }
 
 object FocusEngine {
@@ -112,6 +143,7 @@ object FocusEngine {
             strict = strict,
         )
         FocusState.save(ctx, session)
+        FocusState.saveLastConfig(ctx, FocusState.LastConfig(mode, members.toList(), durationMin, strict))
         AmsController.writeRules()
         // 清栈：正在用的目标 App 立即停下
         for (pkg in targets) ShizukuManager.run("am", "force-stop", pkg)
@@ -122,6 +154,7 @@ object FocusEngine {
     /** 结束会话：清会话层 → 自动恢复原状 → 停服务 → 完成通知。 */
     fun end(ctx: Context, session: FocusSession, completed: Boolean) {
         FocusState.save(ctx, null)
+        if (!completed) FocusState.recordEarlyEnd(ctx)
         AmsController.writeRules()
         com.activitylock.app.core.FocusService.stop(ctx)
         val msg = if (completed) "专注完成，已恢复全部 App" else "专注已提前结束"
