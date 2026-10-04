@@ -20,6 +20,11 @@ import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Card
@@ -87,7 +92,7 @@ fun SettingsScreen(
             onClick = onOpenPresets
         )
         SettingsEntry(
-            icon = Icons.Default.Star,
+            icon = Icons.Default.PlayArrow,
             title = "场景模式",
             subtitle = "方案集合一键启用/停用",
             onClick = onOpenScenes
@@ -99,20 +104,20 @@ fun SettingsScreen(
             onClick = onOpenSchedules
         )
         SettingsEntry(
-            icon = Icons.Default.DateRange,
+            icon = Icons.Default.Info,
             title = "时长限额",
             subtitle = "每日使用上限，超额当天拦截",
             onClick = onOpenQuota
         )
         SettingsGroup("数据与工具")
         SettingsEntry(
-            icon = Icons.Default.DateRange,
+            icon = Icons.Default.Notifications,
             title = "拦截统计",
             subtitle = "今日与累计拦截次数、最近事件",
             onClick = onOpenStats
         )
         SettingsEntry(
-            icon = Icons.Default.DateRange,
+            icon = Icons.Default.List,
             title = "锁定历史",
             subtitle = "历史记录查询，删除后也能找回",
             onClick = onOpenHistory
@@ -131,7 +136,7 @@ fun SettingsScreen(
         )
         SettingsGroup("系统")
         SettingsEntry(
-            icon = Icons.Default.Settings,
+            icon = Icons.Default.Build,
             title = "连接",
             subtitle = "Shizuku 状态与授权",
             onClick = onOpenConnection

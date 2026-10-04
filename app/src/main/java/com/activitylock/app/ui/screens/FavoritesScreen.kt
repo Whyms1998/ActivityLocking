@@ -1,5 +1,6 @@
 package com.activitylock.app.ui.screens
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.clickable
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
@@ -51,7 +53,6 @@ import androidx.compose.ui.unit.dp
 import com.activitylock.app.core.AmsController
 import com.activitylock.app.core.AppStore
 import com.activitylock.app.core.BlockStats
-import com.activitylock.app.core.ConfigPreset
 import com.activitylock.app.core.LockEngine
 import com.activitylock.app.core.LockOutcome
 import com.activitylock.app.core.LockRule
@@ -150,6 +151,8 @@ fun FavoritesScreen(
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
     var sceneBusy by remember { mutableStateOf(false) }
     var todayBlocked by remember { mutableStateOf<Int?>(null) }
+    val uiPrefs = ctx.getSharedPreferences("ui_state", Context.MODE_PRIVATE)
+    var gridView by remember { mutableStateOf(uiPrefs.getBoolean("workbench_grid", true)) }
 
     LaunchedEffect(refreshTick) {
         todayBlocked = withContext(Dispatchers.IO) {
@@ -211,6 +214,10 @@ fun FavoritesScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("工作台", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            TextButton(onClick = {
+                gridView = !gridView
+                uiPrefs.edit().putBoolean("workbench_grid", gridView).apply()
+            }) { Text(if (gridView) "列表" else "宫格") }
             IconButton(onClick = { refreshTick++ }) {
                 Icon(Icons.Default.Refresh, contentDescription = "刷新状态")
             }
@@ -226,9 +233,6 @@ fun FavoritesScreen(
             onOpenSchedules = onOpenSchedules,
             onOpenQuota = onOpenQuota,
             onOpenStats = onOpenStats,
-            directEntries = (com.activitylock.app.core.BuiltinPresets.all + AppStore.userPresets)
-                .filter { it.redirectUri != null }
-                .distinctBy { it.packageName },
         )
 
         if (rules.isEmpty()) {
@@ -247,6 +251,51 @@ fun FavoritesScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+        } else if (gridView) {
+            val byPkg = remember(rules) {
+                rules.groupBy { it.packageName }.mapValues { (pk, v) ->
+                    Triple(
+                        AppStore.findApp(pk)?.label ?: pk,
+                        v.count { r -> r.locked },
+                        v.size
+                    )
+                }
+            }
+            androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(92.dp),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                gridItems(byPkg.entries.sortedBy { it.value.first.lowercase() }, key = { it.key }) { (pkg, info) ->
+                    val (label, locked, total) = info
+                    Column(
+                        Modifier
+                            .padding(6.dp)
+                            .clickable {
+                                gridView = false
+                                uiPrefs.edit().putBoolean("workbench_grid", false).apply()
+                                expanded.clear()
+                                expanded[pkg] = true
+                            }
+                            .padding(4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        AppIcon(pkg, 56.dp)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            if (locked == total) "🔒 $total" else "$locked/$total",
+                            style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+                            color = if (locked == total) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
         } else {
             val grouped = remember(rules) {
                 rules.sortedBy { it.createdAt }.groupBy { it.packageName }
@@ -260,8 +309,8 @@ fun FavoritesScreen(
                             lockedCount = groupRules.count { r ->
                                 if (r.block) r.locked else (actual[key(r)] ?: false)
                             },
-                            expanded = expanded[pkg] != false,
-                            onToggle = { expanded[pkg] = !(expanded[pkg] != false) }
+                            expanded = expanded[pkg] == true,
+                            onToggle = { expanded[pkg] = !(expanded[pkg] == true) }
                         )
                     }
                     if (expanded[pkg] != false) {
@@ -671,7 +720,6 @@ private fun QuickPanel(
     onOpenSchedules: () -> Unit,
     onOpenQuota: () -> Unit,
     onOpenStats: () -> Unit,
-    directEntries: List<ConfigPreset>,
 ) {
     val ctx = LocalContext.current
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
@@ -694,50 +742,22 @@ private fun QuickPanel(
                 }
             }
         }
-        if (directEntries.isNotEmpty()) {
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(top = 8.dp)
-            ) {
-                items(directEntries, key = { "direct_" + it.id }) { preset ->
-                    Card(
-                        Modifier
-                            .width(88.dp)
-                            .padding(vertical = 2.dp)
-                            .clickable {
-                                runCatching {
-                                    ctx.startActivity(
-                                        Intent(Intent.ACTION_VIEW, Uri.parse(preset.redirectUri))
-                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    )
-                                }.onFailure { AppStore.toast("无法打开：${it.message}") }
-                            }
-                    ) {
-                        Column(
-                            Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            AppIcon(preset.packageName, 32.dp)
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                (AppStore.findApp(preset.packageName)?.label ?: preset.label) + "搜索",
-                                style = MaterialTheme.typography.labelSmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
-            }
-        }
         Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.padding(top = 8.dp)
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            AssistChip(onClick = onOpenPresets, label = { Text("方案库") })
-            AssistChip(onClick = onOpenSchedules, label = { Text("定时计划") })
-            AssistChip(onClick = onOpenQuota, label = { Text("时长限额") })
-            AssistChip(onClick = onOpenStats, label = { Text("拦截统计") })
+            AssistChip(onClick = onOpenPresets, modifier = Modifier.weight(1f), label = {
+                Text("方案", maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            })
+            AssistChip(onClick = onOpenSchedules, modifier = Modifier.weight(1f), label = {
+                Text("计划", maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            })
+            AssistChip(onClick = onOpenQuota, modifier = Modifier.weight(1f), label = {
+                Text("限额", maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            })
+            AssistChip(onClick = onOpenStats, modifier = Modifier.weight(1f), label = {
+                Text("统计", maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            })
         }
         Spacer(Modifier.height(6.dp))
     }
