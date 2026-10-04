@@ -17,6 +17,7 @@ object BlockStats {
         val total: Int,
         val today: Int,
         val apps: Map<String, Int>,
+        val daily: Map<String, Int>,
         val recent: List<Entry>,
     )
 
@@ -34,6 +35,15 @@ object BlockStats {
                     apps[k] = json.optInt(k, 0)
                 }
             }
+            val daily = linkedMapOf<String, Int>()
+            val d = o.optJSONObject("daily")
+            d?.let { json ->
+                val keys = json.keys()
+                while (keys.hasNext()) {
+                    val k = keys.next()
+                    daily[k] = json.optInt(k, 0)
+                }
+            }
             val recent = mutableListOf<Entry>()
             val arr = o.optJSONArray("recent")
             arr?.let {
@@ -49,6 +59,7 @@ object BlockStats {
                 total = o.optInt("total", 0),
                 today = apps.values.sum(),
                 apps = apps,
+                daily = daily,
                 recent = recent,
             )
         }.getOrNull()

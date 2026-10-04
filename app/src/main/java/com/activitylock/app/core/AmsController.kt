@@ -14,7 +14,7 @@ import java.io.File
  */
 object AmsController {
 
-    private const val WATCHER_VERSION = 12
+    private const val WATCHER_VERSION = 13
     private const val VERSION_MARKER = "/data/local/tmp/al_watcher.ver"
 
     fun rulesFile(): File {
@@ -62,6 +62,14 @@ object AmsController {
                     org.json.JSONObject()
                         .put("p", pkg)
                         .put("r", "")
+                )
+            }
+            // 临时豁免层：临时解锁期间放行该 App 的所有启动
+            for ((pkg, until) in UnlockExemptions.active(ctx)) {
+                arr.put(
+                    org.json.JSONObject()
+                        .put("e", pkg)
+                        .put("u", until)
                 )
             }
             val f = rulesFile()

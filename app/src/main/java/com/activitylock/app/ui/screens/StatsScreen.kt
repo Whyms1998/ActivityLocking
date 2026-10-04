@@ -1,5 +1,6 @@
 package com.activitylock.app.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -119,6 +120,56 @@ fun StatsScreen(onBack: () -> Unit) {
                             style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                }
+                item {
+                    Text(
+                        "近 7 天",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
+                    )
+                    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                        val today = java.time.LocalDate.now()
+                        val maxDaily = (0..6).maxOf { d ->
+                            s.daily[today.minusDays(d.toLong()).toString()] ?: 0
+                        }.coerceAtLeast(1)
+                        Row(
+                            Modifier.fillMaxWidth().padding(16.dp),
+                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.Bottom
+                        ) {
+                            (6 downTo 0).forEach { back ->
+                                val date = today.minusDays(back.toLong())
+                                val count = s.daily[date.toString()] ?: 0
+                                val h = ((count.toFloat() / maxDaily) * 64).dp.value
+                                    .coerceAtLeast(3f).dp
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(
+                                        "$count",
+                                        style = MaterialTheme.typography.labelSmall
+                                            .copy(fontFeatureSettings = "tnum"),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(Modifier.height(2.dp))
+                                    androidx.compose.foundation.layout.Box(
+                                        Modifier
+                                            .width(18.dp)
+                                            .height(h)
+                                            .background(
+                                                MaterialTheme.colorScheme.primary,
+                                                androidx.compose.foundation.shape.RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp)
+                                            )
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        listOf("一","二","三","四","五","六","日")[date.dayOfWeek.value - 1],
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
                 if (s.apps.isNotEmpty()) {

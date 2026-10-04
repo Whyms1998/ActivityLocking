@@ -20,6 +20,9 @@ class ScheduleWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
         AppStore.ensureInit(applicationContext)
         ScheduleEngine.reconcile(applicationContext, killNow = false)
         FocusEngine.reconcile(applicationContext)
+        if (UnlockExemptions.clearExpired(applicationContext)) {
+            AmsController.writeRules()
+        }
         return Result.success()
     }
 

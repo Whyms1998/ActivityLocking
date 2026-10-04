@@ -29,12 +29,16 @@ public class WatcherMain {
     static final String LOG_PATH = "/data/local/tmp/al_watcher.log";
     /** APP 用该文件判断常驻进程是否为当前版本（不匹配则杀掉重启）。 */
     static final String VERSION_MARKER = "/data/local/tmp/al_watcher.ver";
-    static final int WATCHER_VERSION = 12;
+    static final int WATCHER_VERSION = 13;
 
     /** 组件全名 -> 跳转深链（空串表示仅拦截、不跳转）。 */
     static final ConcurrentHashMap<String, String> BLOCKED = new ConcurrentHashMap<>();
     /** 包名 -> 超额提示页组件（额度用完的 App 整包拒绝所有启动）。 */
     static final ConcurrentHashMap<String, String> PKG_BLOCKED = new ConcurrentHashMap<>();
+    /** 包名 -> 豁免截止时间（epoch ms）：临时解锁期间放行该 App 的所有启动。 */
+    static final ConcurrentHashMap<String, Long> EXEMPT = new ConcurrentHashMap<>();
+    /** 按天拦截计数（ISO 日期 -> 次数），供周报趋势。 */
+    static final ConcurrentHashMap<String, Long> STATS_DAILY = new ConcurrentHashMap<>();
     /** 额度提示页（本 App），超额包的拦截跳转目标。 */
     static final String QUOTA_GATE = "com.activitylock.app/com.activitylock.app.QuotaGateActivity";
     /** 包名 -> 上次跳转时刻，冷却期内不重复跳转。 */
@@ -132,6 +136,14 @@ public class WatcherMain {
             if (rec != null) {
                 for (int i = 0; i < rec.length(); i++) STATS_RECENT.addLast(rec.optString(i));
             }
+            org.json.JSONObject daily = o.optJSONObject("daily");
+            if (daily != null) {
+                java.util.Iterator<String> it = daily.keys();
+                while (it.hasNext()) {
+                    String k = it.next();
+                    STATS_DAILY.put(k, daily.optLong(k, 0));
+                }
+            }
             if (!today.equals(STATS_DATE)) {
                 STATS_COUNT.clear();
                 STATS_DATE = today;
@@ -144,6 +156,7 @@ public class WatcherMain {
 
     static void countBlock(String pkg, String comp) {
         STATS_COUNT.merge(pkg, 1L, Long::sum);
+        STATS_DAILY.merge(today(), 1L, Long::sum);
         STATS_TOTAL++;
         synchronized (STATS_RECENT) {
             STATS_RECENT.addFirst(System.currentTimeMillis() + "|" + pkg + "|" + comp);
@@ -168,6 +181,11 @@ public class WatcherMain {
                 apps.put(e.getKey(), e.getValue());
             }
             o.put("apps", apps);
+            org.json.JSONObject daily = new org.json.JSONObject();
+            for (java.util.Map.Entry<String, Long> e : STATS_DAILY.entrySet()) {
+                daily.put(e.getKey(), e.getValue());
+            }
+            o.put("daily", daily);
             org.json.JSONArray rec = new org.json.JSONArray();
             synchronized (STATS_RECENT) {
                 for (String s : STATS_RECENT) rec.put(s);
@@ -281,6 +299,7 @@ public class WatcherMain {
             org.json.JSONArray arr = new org.json.JSONArray(sb.toString());
             ConcurrentHashMap<String, String> next = new ConcurrentHashMap<>();
             ConcurrentHashMap<String, String> nextPkgs = new ConcurrentHashMap<>();
+            ConcurrentHashMap<String, Long> nextExempt = new ConcurrentHashMap<>();
             for (int i = 0; i < arr.length(); i++) {
                 Object el = arr.get(i);
                 if (el instanceof org.json.JSONObject) {
@@ -288,6 +307,11 @@ public class WatcherMain {
                     String pkg = o.optString("p", "");
                     if (!pkg.isEmpty()) {
                         nextPkgs.put(pkg, o.optString("r", "")); // 包级拦截（超额）
+                        continue;
+                    }
+                    String ep = o.optString("e", "");
+                    if (!ep.isEmpty()) {
+                        EXEMPT.put(ep, o.optLong("u", 0)); // 临时豁免
                         continue;
                     }
                     String comp = o.optString("c", "");
@@ -300,6 +324,8 @@ public class WatcherMain {
             BLOCKED.putAll(next);
             PKG_BLOCKED.clear();
             PKG_BLOCKED.putAll(nextPkgs);
+            EXEMPT.clear();
+            EXEMPT.putAll(nextExempt);
             // 规则变化（可能换了跳转目标）→ 解除坏目标抑制，给新目标机会
             SUPPRESS_UNTIL.clear();
         } catch (Throwable ignored) {
@@ -458,6 +484,12 @@ public class WatcherMain {
             if (intent == null) return true;
             ComponentName cn = intent.getComponent();
             if (cn == null) return true;
+            // 临时豁免：该包处于"临时解锁"期，直接放行（含过期自判）
+            Long exemptUntil = EXEMPT.get(pkg);
+            if (exemptUntil != null && System.currentTimeMillis() < exemptUntil) {
+                log("ALLOW(exempt) " + pkg);
+                return true;
+            }
             if (BLOCKED.isEmpty() && PKG_BLOCKED.isEmpty()) return true;
             String flat = cn.flattenToString();
             String full = pkg + "/" + cn.getClassName();

@@ -65,6 +65,7 @@ import com.activitylock.app.core.LockOutcome
 import com.activitylock.app.core.LockRule
 import com.activitylock.app.core.Scene
 import com.activitylock.app.core.SceneEngine
+import com.activitylock.app.core.UnlockExemptions
 import com.activitylock.app.core.VerifyGate
 import com.activitylock.app.ui.components.AppIcon
 import com.activitylock.app.ui.components.UnlockVerifyDialog
@@ -827,6 +828,7 @@ private fun GridDetailDialog(
     onToggle: (LockRule, Boolean) -> Unit,
     busy: Map<String, Boolean>,
 ) {
+    val ctx = LocalContext.current
     val memberRules = AppStore.rules.filter { it.packageName == pkg }
     val lockedCount = memberRules.count { it.locked }
     val label = AppStore.findApp(pkg)?.label ?: pkg.substringAfterLast('.')
@@ -849,6 +851,47 @@ private fun GridDetailDialog(
                     TextButton(onClick = onClose) { Text("关闭") }
                 }
                 Spacer(Modifier.height(8.dp))
+                val exemptUntil = UnlockExemptions.active(ctx)[pkg]
+                val exemptActive = exemptUntil != null && exemptUntil > System.currentTimeMillis()
+                if (exemptActive) {
+                    val untilStr = remember(exemptUntil) {
+                        java.text.SimpleDateFormat("HH:mm").format(java.util.Date(exemptUntil))
+                    }
+                    Text(
+                        "已临时解锁至 $untilStr",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.tertiary
+                    )
+                    Spacer(Modifier.height(8.dp))
+                } else {
+                    var pendingTempUnlock by remember { mutableStateOf(false) }
+                    if (pendingTempUnlock) {
+                        val memberReq = VerifyGate.bulkRequirement(
+                            ctx,
+                            AppStore.rules.filter { it.packageName == pkg }
+                        )
+                        val requirement = if (memberReq.isNone) {
+                            VerifyGate.Requirement(VerifyGate.METHOD_QUIZ, 0, emptyList())
+                        } else memberReq
+                        UnlockVerifyDialog(
+                            requirement = requirement,
+                            title = "临时解锁验证",
+                            hint = "临时解锁 15 分钟后自动恢复拦截",
+                            onConfirmed = {
+                                pendingTempUnlock = false
+                                UnlockExemptions.add(ctx, pkg, System.currentTimeMillis() + 15 * 60_000)
+                                AmsController.writeRules()
+                                AppStore.toast("已临时解锁至 " +
+                                    java.text.SimpleDateFormat("HH:mm").format(java.util.Date(System.currentTimeMillis() + 15 * 60_000)))
+                            },
+                            onDismiss = { pendingTempUnlock = false }
+                        )
+                    }
+                    TextButton(onClick = { pendingTempUnlock = true }) {
+                        Text("临时解锁 15 分钟")
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
                 Column(
                     Modifier
                         .heightIn(max = 420.dp)

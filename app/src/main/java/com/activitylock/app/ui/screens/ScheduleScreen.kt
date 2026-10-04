@@ -212,6 +212,7 @@ private fun ScheduleEditorDialog(
     onDismiss: () -> Unit,
 ) {
     var label by remember { mutableStateOf(initial?.label ?: "") }
+    var vDays by remember { mutableStateOf(initial?.weekdays) }
     var startHour by remember { mutableStateOf(initial?.startHour ?: 23) }
     var startMinute by remember { mutableStateOf(initial?.startMinute ?: 0) }
     var endHour by remember { mutableStateOf(initial?.endHour ?: 7) }
@@ -267,6 +268,26 @@ private fun ScheduleEditorDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Spacer(Modifier.height(10.dp))
+                Text("生效星期", style = MaterialTheme.typography.titleSmall)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf("一","二","三","四","五","六","日").forEachIndexed { idx, d ->
+                        val day = idx + 1
+                        FilterChip(
+                            selected = vDays?.contains(day) ?: true,
+                            onClick = {
+                                val cur = vDays ?: (1..7).toSet()
+                                vDays = if (cur.contains(day)) cur - day else cur + day
+                            },
+                            label = { Text(d) }
+                        )
+                    }
+                }
+                Text(
+                    "不选任何星期 = 计划停用",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         },
         confirmButton = {
@@ -278,6 +299,7 @@ private fun ScheduleEditorDialog(
                         startHour = startHour, startMinute = startMinute,
                         endHour = endHour, endMinute = endMinute,
                         enabled = initial?.enabled ?: true,
+                        weekdays = vDays?.takeIf { it.isNotEmpty() },
                     )
                 )
             }) { Text("保存") }

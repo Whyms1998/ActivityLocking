@@ -17,6 +17,8 @@ data class LockSchedule(
     val endHour: Int,
     val endMinute: Int,
     val enabled: Boolean = true,
+    /** 生效的星期（1=周一…7=周日），null=每天 */
+    val weekdays: Set<Int>? = null,
 )
 
 @Serializable
