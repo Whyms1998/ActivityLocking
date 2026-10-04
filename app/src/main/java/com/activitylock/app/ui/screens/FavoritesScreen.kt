@@ -351,20 +351,17 @@ fun FavoritesScreen(
             }
         } else if (gridView) {
             val byPkg = remember(rules) {
-                rules.groupBy { it.packageName }.mapValues { (pk, v) ->
-                    Triple(
-                        AppStore.findApp(pk)?.label ?: pk,
-                        v.count { r -> r.locked },
-                        v.size
-                    )
+                rules.groupBy { it.packageName }.mapValues { (_, v) ->
+                    Pair(v.count { r -> r.locked }, v.size)
                 }
             }
             androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
                 columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(92.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                gridItems(byPkg.entries.sortedBy { it.value.first.lowercase() }, key = { it.key }) { (pkg, info) ->
-                    val (label, locked, total) = info
+                gridItems(byPkg.entries.sortedBy { it.key }, key = { it.key }) { (pkg, counts) ->
+                    val (locked, total) = counts
+                    val label = AppStore.findApp(pkg)?.label ?: pkg
                     Column(
                         Modifier
                             .padding(6.dp)

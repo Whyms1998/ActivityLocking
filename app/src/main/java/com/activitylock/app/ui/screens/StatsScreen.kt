@@ -218,30 +218,6 @@ fun StatsScreen(onBack: () -> Unit) {
                         }
                     }
                 }
-                if (s.recent.isNotEmpty()) {
-                    item {
-                        Text(
-                            "最近拦截",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
-                        )
-                    }
-                    items(s.recent.take(20), key = { it.time.toString() + it.comp }) { e ->
-                        val time = remember(e.time) {
-                            SimpleDateFormat("HH:mm:ss").format(java.util.Date(e.time))
-                        }
-                        Text(
-                            "$time  ${AppStore.findApp(e.pkg)?.label ?: e.pkg}",
-                            style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 24.dp, vertical = 4.dp)
-                        )
-                    }
-                }
                 item { Spacer(Modifier.height(24.dp)) }
             }
         }
