@@ -8,6 +8,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
@@ -66,7 +67,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private fun isTopLevel(s: Screen) =
-    s is Screen.Favorites || s is Screen.Apps || s is Screen.Settings
+    s is Screen.Favorites || s is Screen.Apps || s is Screen.Stats || s is Screen.Settings
 
 private fun switchTab(stack: MutableList<Screen>, target: Screen, current: Screen) {
     if (current == target) return
@@ -116,7 +117,13 @@ private fun AppRoot() {
     ) { padding ->
         Box(Modifier.padding(padding)) {
             when (val screen = current) {
-                Screen.Favorites -> FavoritesScreen()
+                Screen.Favorites -> FavoritesScreen(
+                    onOpenApps = { switchTab(stack, Screen.Apps, current) },
+                    onOpenPresets = { stack.add(Screen.Presets) },
+                    onOpenSchedules = { stack.add(Screen.Schedules) },
+                    onOpenQuota = { stack.add(Screen.Quota) },
+                    onOpenStats = { stack.add(Screen.Stats) }
+                )
                 Screen.Apps -> AppsScreen(
                     onOpenDetail = { pkg -> stack.add(Screen.Detail(pkg)) }
                 )

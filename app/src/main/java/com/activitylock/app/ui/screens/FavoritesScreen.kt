@@ -2,6 +2,8 @@ package com.activitylock.app.ui.screens
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,6 +13,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
@@ -21,6 +25,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -30,6 +35,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -46,13 +52,19 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.activitylock.app.core.AmsController
 import com.activitylock.app.core.AppStore
+import com.activitylock.app.core.SceneEngine
+import com.activitylock.app.core.Scene
+import com.activitylock.app.core.BlockStats
+import com.activitylock.app.core.ConfigPreset
 import com.activitylock.app.core.LockEngine
 import com.activitylock.app.core.LockOutcome
 import com.activitylock.app.core.LockRule
 import com.activitylock.app.core.VerifyGate
 import com.activitylock.app.ui.components.AppIcon
 import com.activitylock.app.ui.components.UnlockVerifyDialog
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 private fun VerifyModeRow(selected: Boolean, title: String, onClick: () -> Unit) {
@@ -116,7 +128,13 @@ private fun GroupHeader(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FavoritesScreen() {
+fun FavoritesScreen(
+    onOpenApps: () -> Unit = {},
+    onOpenPresets: () -> Unit = {},
+    onOpenSchedules: () -> Unit = {},
+    onOpenQuota: () -> Unit = {},
+    onOpenStats: () -> Unit = {},
+) {
     val rules = AppStore.rules
     val actual = remember { mutableStateMapOf<String, Boolean>() }
     val busy = remember { mutableStateMapOf<String, Boolean>() }
@@ -128,6 +146,41 @@ fun FavoritesScreen() {
     var pendingUnlock by remember { mutableStateOf<LockRule?>(null) }
     var pendingDelete by remember { mutableStateOf<LockRule?>(null) }
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
+    var sceneBusy by remember { mutableStateOf(false) }
+    var pendingSceneDeactivate by remember { mutableStateOf<Scene?>(null) }
+    var todayBlocked by remember { mutableStateOf<Int?>(null) }
+
+    LaunchedEffect(refreshTick) {
+        todayBlocked = withContext(Dispatchers.IO) {
+            runCatching { BlockStats.read()?.today }.getOrNull()
+        }
+    }
+
+    fun toggleScene(scene: Scene) {
+        if (sceneBusy) return
+        if (!scene.active) {
+            sceneBusy = true
+            scope.launch {
+                val n = SceneEngine.activate(scene)
+                AppStore.upsertScene(scene.copy(active = true))
+                AppStore.toast("「" + scene.label.ifBlank { "场景" } + "」已启用 " + n + " 个应用")
+                sceneBusy = false
+            }
+        } else {
+            val req = SceneEngine.deactivateRequirement(ctx, scene)
+            if (req.isNone) {
+                sceneBusy = true
+                scope.launch {
+                    val n = SceneEngine.deactivate(scene)
+                    AppStore.upsertScene(scene.copy(active = false))
+                    AppStore.toast("场景已停用，" + n + " 个界面解锁")
+                    sceneBusy = false
+                }
+            } else {
+                pendingSceneDeactivate = scene
+            }
+        }
+    }
 
     fun refresh() {
         for (r in rules) {
@@ -156,11 +209,26 @@ fun FavoritesScreen() {
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("收藏夹", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            Text("工作台", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
             IconButton(onClick = { refreshTick++ }) {
                 Icon(Icons.Default.Refresh, contentDescription = "刷新状态")
             }
         }
+
+        QuickPanel(
+            lockedCount = rules.count { it.locked },
+            todayBlocked = todayBlocked,
+            scenes = AppStore.scenes,
+            sceneBusy = sceneBusy,
+            onToggleScene = { toggleScene(it) },
+            onOpenPresets = onOpenPresets,
+            onOpenSchedules = onOpenSchedules,
+            onOpenQuota = onOpenQuota,
+            onOpenStats = onOpenStats,
+            directEntries = (com.activitylock.app.core.BuiltinPresets.all + AppStore.userPresets)
+                .filter { it.redirectUri != null }
+                .distinctBy { it.packageName },
+        )
 
         if (rules.isEmpty()) {
             Column(
@@ -329,10 +397,35 @@ fun FavoritesScreen() {
                     }
                     }
                 }
+                item(key = "tail_add") {
+                    TextButton(
+                        onClick = onOpenApps,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
+                    ) { Text("＋ 添加要锁定的界面") }
+                }
             }
         }
     }
-}
+            }
+
+    pendingSceneDeactivate?.let { scene ->
+        UnlockVerifyDialog(
+            requirement = SceneEngine.deactivateRequirement(ctx, scene),
+            title = "停用场景验证",
+            hint = "停用将解锁该场景的所有界面",
+            onConfirmed = {
+                pendingSceneDeactivate = null
+                sceneBusy = true
+                scope.launch {
+                    val n = SceneEngine.deactivate(scene)
+                    AppStore.upsertScene(scene.copy(active = false))
+                    AppStore.toast("场景已停用，" + n + " 个界面解锁")
+                    sceneBusy = false
+                }
+            },
+            onDismiss = { pendingSceneDeactivate = null }
+        )
+    }
 
     pendingDelete?.let { rule ->
         UnlockVerifyDialog(
@@ -558,5 +651,92 @@ fun FavoritesScreen() {
                 onDismiss = { pendingWeakSave = false }
             )
         }
+    }
+}
+
+/**
+ * 工作台快捷面板：状态行 + 场景一键切换 + 搜索直达（桌面快捷方式的 App 内镜像）+ 功能入口。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun QuickPanel(
+    lockedCount: Int,
+    todayBlocked: Int?,
+    scenes: List<Scene>,
+    sceneBusy: Boolean,
+    onToggleScene: (Scene) -> Unit,
+    onOpenPresets: () -> Unit,
+    onOpenSchedules: () -> Unit,
+    onOpenQuota: () -> Unit,
+    onOpenStats: () -> Unit,
+    directEntries: List<ConfigPreset>,
+) {
+    val ctx = LocalContext.current
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+        Text(
+            "已锁定 " + lockedCount + " 个界面" + (todayBlocked?.let { " · 今日拦截 " + it + " 次" } ?: ""),
+            style = MaterialTheme.typography.labelLarge.copy(fontFeatureSettings = "tnum"),
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (scenes.isNotEmpty()) {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(top = 8.dp)
+            ) {
+                items(scenes, key = { it.id }) { s ->
+                    FilterChip(
+                        selected = s.active,
+                        onClick = { onToggleScene(s) },
+                        label = { Text(s.label.ifBlank { "场景" }) }
+                    )
+                }
+            }
+        }
+        if (directEntries.isNotEmpty()) {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(top = 8.dp)
+            ) {
+                items(directEntries, key = { "direct_" + it.id }) { preset ->
+                    Card(
+                        Modifier
+                            .width(88.dp)
+                            .padding(vertical = 2.dp)
+                            .clickable {
+                                runCatching {
+                                    ctx.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse(preset.redirectUri))
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    )
+                                }.onFailure { AppStore.toast("无法打开：" + it.message) }
+                            }
+                    ) {
+                        Column(
+                            Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            AppIcon(preset.packageName, 32.dp)
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                (AppStore.findApp(preset.packageName)?.label ?: preset.label) + "搜索",
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(top = 8.dp)
+        ) {
+            AssistChip(onClick = onOpenPresets, label = { Text("方案库") })
+            AssistChip(onClick = onOpenSchedules, label = { Text("定时计划") })
+            AssistChip(onClick = onOpenQuota, label = { Text("时长限额") })
+            AssistChip(onClick = onOpenStats, label = { Text("拦截统计") })
+        }
+        Spacer(Modifier.height(6.dp))
     }
 }

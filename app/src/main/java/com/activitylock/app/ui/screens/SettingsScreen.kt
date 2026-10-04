@@ -79,11 +79,43 @@ fun SettingsScreen(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
         )
 
+        SettingsGroup("核心功能")
         SettingsEntry(
-            icon = Icons.Default.Settings,
-            title = "连接",
-            subtitle = "Shizuku：$status",
-            onClick = onOpenConnection
+            icon = Icons.Default.Star,
+            title = "方案库",
+            subtitle = "常用 App 一键配置，误删可一键恢复",
+            onClick = onOpenPresets
+        )
+        SettingsEntry(
+            icon = Icons.Default.Star,
+            title = "场景模式",
+            subtitle = "方案集合一键启用/停用",
+            onClick = onOpenScenes
+        )
+        SettingsEntry(
+            icon = Icons.Default.DateRange,
+            title = "定时计划",
+            subtitle = "睡眠模式：指定时段自动全部上锁",
+            onClick = onOpenSchedules
+        )
+        SettingsEntry(
+            icon = Icons.Default.DateRange,
+            title = "时长限额",
+            subtitle = "每日使用上限，超额当天拦截",
+            onClick = onOpenQuota
+        )
+        SettingsGroup("数据与工具")
+        SettingsEntry(
+            icon = Icons.Default.DateRange,
+            title = "拦截统计",
+            subtitle = "今日与累计拦截次数、最近事件",
+            onClick = onOpenStats
+        )
+        SettingsEntry(
+            icon = Icons.Default.DateRange,
+            title = "锁定历史",
+            subtitle = "历史记录查询，删除后也能找回",
+            onClick = onOpenHistory
         )
         SettingsEntry(
             icon = Icons.Default.Search,
@@ -97,49 +129,19 @@ fun SettingsScreen(
             subtitle = "常用深链查询、复制与测试",
             onClick = onOpenSchemes
         )
+        SettingsGroup("系统")
         SettingsEntry(
-            icon = Icons.Default.DateRange,
-            title = "锁定历史",
-            subtitle = "历史记录查询，删除后也能找回",
-            onClick = onOpenHistory
-        )
-        SettingsEntry(
-            icon = Icons.Default.Lock,
-            title = "方案库",
-            subtitle = "常用 App 一键配置，误删可一键恢复",
-            onClick = onOpenPresets
-        )
-        SettingsEntry(
-            icon = Icons.Default.DateRange,
-            title = "时长限额",
-            subtitle = "每日使用上限，超额当天拦截",
-            onClick = onOpenQuota
-        )
-        SettingsEntry(
-            icon = Icons.Default.Star,
-            title = "场景模式",
-            subtitle = "方案集合一键启用/停用",
-            onClick = onOpenScenes
-        )
-        SettingsEntry(
-            icon = Icons.Default.DateRange,
-            title = "拦截统计",
-            subtitle = "今日与累计拦截次数、最近事件",
-            onClick = onOpenStats
-        )
-        SettingsEntry(
-            icon = Icons.Default.DateRange,
-            title = "定时计划",
-            subtitle = "睡眠模式：指定时段自动全部上锁",
-            onClick = onOpenSchedules
+            icon = Icons.Default.Settings,
+            title = "连接",
+            subtitle = "Shizuku 状态与授权",
+            onClick = onOpenConnection
         )
         SettingsEntry(
             icon = Icons.Default.Lock,
             title = "解锁验证",
-            subtitle = "自律：解锁前需等待或输入密码",
+            subtitle = "全局默认条件与防绕过",
             onClick = onOpenVerify
         )
-
         Spacer(Modifier.height(24.dp))
         Text(
             "应用锁 v0.4.0",
@@ -151,6 +153,16 @@ fun SettingsScreen(
             textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
     }
+}
+
+@Composable
+private fun SettingsGroup(title: String) {
+    Text(
+        title,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 16.dp, top = 14.dp, bottom = 4.dp)
+    )
 }
 
 @Composable
