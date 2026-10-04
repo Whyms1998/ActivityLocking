@@ -29,7 +29,7 @@ public class WatcherMain {
     static final String LOG_PATH = "/data/local/tmp/al_watcher.log";
     /** APP 用该文件判断常驻进程是否为当前版本（不匹配则杀掉重启）。 */
     static final String VERSION_MARKER = "/data/local/tmp/al_watcher.ver";
-    static final int WATCHER_VERSION = 13;
+    static final int WATCHER_VERSION = com.activitylock.app.core.WatcherVersion.VERSION;
 
     /** 组件全名 -> 跳转深链（空串表示仅拦截、不跳转）。 */
     static final ConcurrentHashMap<String, String> BLOCKED = new ConcurrentHashMap<>();
@@ -297,6 +297,7 @@ public class WatcherMain {
             }
             r.close();
             org.json.JSONArray arr = new org.json.JSONArray(sb.toString());
+            log("reload file: " + sb.substring(0, Math.min(sb.length(), 200)));
             ConcurrentHashMap<String, String> next = new ConcurrentHashMap<>();
             ConcurrentHashMap<String, String> nextPkgs = new ConcurrentHashMap<>();
             ConcurrentHashMap<String, Long> nextExempt = new ConcurrentHashMap<>();
@@ -311,7 +312,7 @@ public class WatcherMain {
                     }
                     String ep = o.optString("e", "");
                     if (!ep.isEmpty()) {
-                        EXEMPT.put(ep, o.optLong("u", 0)); // 临时豁免
+                        nextExempt.put(ep, o.optLong("u", 0)); // 临时豁免（随 reload 统一合并）
                         continue;
                     }
                     String comp = o.optString("c", "");
@@ -326,6 +327,7 @@ public class WatcherMain {
             PKG_BLOCKED.putAll(nextPkgs);
             EXEMPT.clear();
             EXEMPT.putAll(nextExempt);
+            log("reload: c=" + next.size() + " p=" + nextPkgs.size() + " e=" + nextExempt.size());
             // 规则变化（可能换了跳转目标）→ 解除坏目标抑制，给新目标机会
             SUPPRESS_UNTIL.clear();
         } catch (Throwable ignored) {

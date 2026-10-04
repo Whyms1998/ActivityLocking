@@ -14,7 +14,7 @@ import java.io.File
  */
 object AmsController {
 
-    private const val WATCHER_VERSION = 13
+    private val WATCHER_VERSION = WatcherVersion.VERSION
     private const val VERSION_MARKER = "/data/local/tmp/al_watcher.ver"
 
     fun rulesFile(): File {
