@@ -493,6 +493,17 @@ fun FavoritesScreen(
         }
     }
 
+    gridDetailPkg?.let { pkg ->
+        GridDetailDialog(
+            pkg = pkg,
+            onClose = { gridDetailPkg = null },
+            onEdit = { editing = it },
+            onDeleteRequest = { ruleDeleteRequest(it) },
+            onToggle = { rule, want -> ruleToggle(rule, want) },
+            busy = busy,
+        )
+    }
+
     pendingSceneDeactivate?.let { scene ->
         UnlockVerifyDialog(
             requirement = SceneEngine.deactivateRequirement(ctx, scene),
