@@ -2,7 +2,9 @@ package com.activitylock.app.ui.screens
 
 import android.content.ClipboardManager
 import android.content.Context
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,23 +12,28 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -39,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
@@ -62,6 +70,20 @@ private fun statusOf(p: ConfigPreset, installed: Set<String>): PresetStatus {
     return if (rule.locked && redirectMatch) PresetStatus.Active else PresetStatus.NeedsRestore
 }
 
+/** 状态点颜色：绿=已启用，琥珀=待恢复，灰=未导入/未安装。 */
+private fun statusColor(status: PresetStatus): Color = when (status) {
+    PresetStatus.Active -> Color(0xFF2E7D5B)
+    PresetStatus.NeedsRestore -> Color(0xFFB07D2B)
+    else -> Color(0xFFB9BDB5)
+}
+
+private fun statusLabel(status: PresetStatus): String = when (status) {
+    PresetStatus.Active -> "已启用"
+    PresetStatus.NeedsRestore -> "待恢复"
+    PresetStatus.NotImported -> "未导入"
+    PresetStatus.NotInstalled -> "未安装"
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PresetScreen(onBack: () -> Unit) {
@@ -72,11 +94,11 @@ fun PresetScreen(onBack: () -> Unit) {
     var editing by remember { mutableStateOf<ConfigPreset?>(null) }
     var creating by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf<ConfigPreset?>(null) }
+    var tab by remember { mutableStateOf(0) } // 0=内置 1=我的
 
     fun applyPreset(p: ConfigPreset) {
         busyId = p.id
         scope.launch {
-            // 恢复纯拦截方案时，先清掉遗留的自定义跳转
             if (p.redirectUri.isNullOrBlank()) {
                 AppStore.updateRedirect(p.packageName, p.activityName, null)
             }
@@ -136,30 +158,50 @@ fun PresetScreen(onBack: () -> Unit) {
         }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            Text(
-                "一键配置「锁界面 + 跳转」。改坏或误删后回到这里点「恢复」即可；" +
-                    "自定义方案可导出到剪贴板分享，导入后自动转为用户方案。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-            )
-            LazyColumn(Modifier.fillMaxSize()) {
-                item { SectionHeader("内置方案") }
-                items(BuiltinPresets.all, key = { "b_" + it.id }) { p ->
-                    PresetRow(p, installed, busyId == p.id, { applyPreset(p) },
-                        onPin = if (p.redirectUri != null) { { pinShortcut(p) } } else null,
-                        onEdit = null, onDelete = null)
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilterChip(
+                    selected = tab == 0,
+                    onClick = { tab = 0 },
+                    label = { Text("内置方案") }
+                )
+                FilterChip(
+                    selected = tab == 1,
+                    onClick = { tab = 1 },
+                    label = { Text("我的方案") }
+                )
+            }
+            val list = if (tab == 0) BuiltinPresets.all else AppStore.userPresets
+            if (tab == 1 && list.isEmpty()) {
+                Column(
+                    Modifier.fillMaxSize().padding(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("还没有自定义方案", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "点右上角「＋」新建；或在收藏夹编辑界面时「存为预设」。\n导出/导入通过剪贴板分享 JSON。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-                if (AppStore.userPresets.isNotEmpty()) {
-                    item { SectionHeader("我的方案") }
-                    items(AppStore.userPresets, key = { "u_" + it.id }) { p ->
-                        PresetRow(p, installed, busyId == p.id, { applyPreset(p) },
+            } else {
+                LazyColumn(Modifier.fillMaxSize()) {
+                    items(list, key = { "b_" + it.id }) { p ->
+                        PresetRow(
+                            preset = p,
+                            installed = installed,
+                            busy = busyId == p.id,
+                            onApply = { applyPreset(p) },
                             onPin = if (p.redirectUri != null) { { pinShortcut(p) } } else null,
-                            onEdit = { editing = it },
-                            onDelete = { deleting = it })
+                            onEdit = if (tab == 1) { { editing = p } } else null,
+                            onDelete = if (tab == 1) { { deleting = p } } else null,
+                        )
                     }
+                    item { Spacer(Modifier.height(24.dp)) }
                 }
-                item { Spacer(Modifier.height(24.dp)) }
             }
         }
     }
@@ -190,18 +232,8 @@ fun PresetScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun SectionHeader(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-    )
-}
-
-@Composable
 private fun PresetRow(
-    p: ConfigPreset,
+    preset: ConfigPreset,
     installed: Set<String>,
     busy: Boolean,
     onApply: () -> Unit,
@@ -209,7 +241,8 @@ private fun PresetRow(
     onEdit: ((ConfigPreset) -> Unit)?,
     onDelete: ((ConfigPreset) -> Unit)?,
 ) {
-    val status = statusOf(p, installed)
+    val status = statusOf(preset, installed)
+    var menuOpen by remember { mutableStateOf(false) }
 
     Card(
         Modifier
@@ -218,24 +251,34 @@ private fun PresetRow(
             .alpha(if (status == PresetStatus.NotInstalled) 0.55f else 1f)
     ) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            AppIcon(p.packageName, 42.dp)
+            AppIcon(preset.packageName, 40.dp)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier
+                            .size(8.dp)
+                            .background(statusColor(status), CircleShape)
+                    )
+                    Spacer(Modifier.width(6.dp))
                     Text(
-                        p.label,
+                        preset.label,
                         style = MaterialTheme.typography.titleSmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
                     Spacer(Modifier.width(6.dp))
-                    StatusChip(status)
+                    Text(
+                        statusLabel(status),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 Spacer(Modifier.height(2.dp))
-                if (p.note.isNotBlank()) {
+                if (preset.note.isNotBlank()) {
                     Text(
-                        p.note,
+                        preset.note,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -243,8 +286,8 @@ private fun PresetRow(
                     )
                 }
                 Text(
-                    "锁 ${p.activityName.substringAfterLast('.')}" +
-                        (p.redirectUri?.let { "  ↗ $it" } ?: "  · 纯拦截"),
+                    "锁 ${preset.activityName.substringAfterLast('.')}" +
+                        (preset.redirectUri?.let { "  ↗ $it" } ?: "  · 纯拦截"),
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = FontFamily.Monospace,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -270,50 +313,34 @@ private fun PresetRow(
                     )
                 }
             }
-            if (p.redirectUri != null && status != PresetStatus.NotInstalled && onPin != null) {
-                TextButton(onClick = onPin, enabled = !busy) {
-                    Text("直达", style = MaterialTheme.typography.labelMedium)
-                }
-            }
             if (onEdit != null && onDelete != null) {
-                IconButton(onClick = { onEdit(p) }) {
-                    Icon(Icons.Default.Edit, contentDescription = "编辑", modifier = Modifier.width(20.dp))
-                }
-                IconButton(onClick = { onDelete(p) }) {
-                    Icon(Icons.Default.Delete, contentDescription = "删除", modifier = Modifier.width(20.dp))
+                Box {
+                    IconButton(onClick = { menuOpen = true }, enabled = !busy) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "更多")
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        if (onPin != null) {
+                            DropdownMenuItem(
+                                text = { Text("搜索直达") },
+                                onClick = { menuOpen = false; onPin() },
+                                enabled = preset.redirectUri != null
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("编辑") },
+                            onClick = { menuOpen = false; onEdit(preset) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("删除") },
+                            onClick = { menuOpen = false; onDelete(preset) }
+                        )
+                    }
                 }
             }
         }
     }
 }
 
-@Composable
-private fun StatusChip(status: PresetStatus) {
-    val (text, container, content) = when (status) {
-        PresetStatus.Active -> Triple(
-            "已启用", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer
-        )
-        PresetStatus.NeedsRestore -> Triple(
-            "待恢复", MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer
-        )
-        PresetStatus.NotImported -> Triple(
-            "未导入", MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        PresetStatus.NotInstalled -> Triple(
-            "未安装", MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-    Surface(shape = MaterialTheme.shapes.extraSmall, color = container) {
-        Text(
-            text,
-            style = MaterialTheme.typography.labelSmall,
-            color = content,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-        )
-    }
-}
-
-/** 新建 / 编辑用户方案。 */
 @Composable
 private fun PresetEditorDialog(
     initial: ConfigPreset?,
@@ -357,20 +384,23 @@ private fun PresetEditorDialog(
             }
         },
         confirmButton = {
-            TextButton(enabled = valid, onClick = {
-                onSave(
-                    ConfigPreset(
-                        id = initial?.id ?: "",
-                        label = label.trim(),
-                        packageName = pkg.trim(),
-                        activityName = activity.trim(),
-                        redirectUri = redirect.trim().takeIf { it.isNotBlank() },
-                        note = note.trim(),
-                        verified = initial?.verified ?: false,
-                        builtin = false,
+            TextButton(
+                enabled = valid,
+                onClick = {
+                    onSave(
+                        ConfigPreset(
+                            id = initial?.id ?: "",
+                            label = label.trim(),
+                            packageName = pkg.trim(),
+                            activityName = activity.trim(),
+                            redirectUri = redirect.trim().takeIf { it.isNotBlank() },
+                            note = note.trim(),
+                            verified = initial?.verified ?: false,
+                            builtin = false,
+                        )
                     )
-                )
-            }) { Text("保存") }
+                }
+            ) { Text("保存") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )
