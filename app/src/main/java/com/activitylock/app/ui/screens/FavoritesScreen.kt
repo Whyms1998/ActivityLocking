@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,7 +13,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -27,6 +31,7 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
@@ -53,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import com.activitylock.app.core.AmsController
 import com.activitylock.app.core.AppStore
 import com.activitylock.app.core.BlockStats
+import com.activitylock.app.core.ConfigPreset
 import com.activitylock.app.core.LockEngine
 import com.activitylock.app.core.LockOutcome
 import com.activitylock.app.core.LockRule
@@ -148,6 +155,7 @@ fun FavoritesScreen(
     var pendingUnlock by remember { mutableStateOf<LockRule?>(null) }
     var pendingDelete by remember { mutableStateOf<LockRule?>(null) }
     var pendingSceneDeactivate by remember { mutableStateOf<Scene?>(null) }
+    var gridDetailPkg by remember { mutableStateOf<String?>(null) }
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
     var sceneBusy by remember { mutableStateOf(false) }
     var todayBlocked by remember { mutableStateOf<Int?>(null) }
@@ -177,6 +185,37 @@ fun FavoritesScreen(
             o.locked && o.mode == "pm" -> AppStore.toast("锁定完成（组件已禁用）")
             o.locked && o.mode == "block" -> AppStore.toast("已启用拦截：该界面将无法启动")
             else -> AppStore.toast("已解锁（条目保留，可随时再锁定）")
+        }
+    }
+
+    fun ruleToggle(rule: LockRule, want: Boolean) {
+        val ruleKey = key(rule)
+        if (want) {
+            busy[ruleKey] = true
+            scope.launch {
+                onOutcome(LockEngine.apply(rule.packageName, rule.activityName, true, rule.redirectUri))
+                refresh()
+                busy[ruleKey] = false
+            }
+        } else if (!VerifyGate.requirementFor(ctx, rule).isNone) {
+            pendingUnlock = rule
+        } else {
+            busy[ruleKey] = true
+            scope.launch {
+                onOutcome(LockEngine.apply(rule.packageName, rule.activityName, false))
+                refresh()
+                busy[ruleKey] = false
+            }
+        }
+    }
+
+    fun ruleDeleteRequest(rule: LockRule) {
+        val locked = if (rule.block) rule.locked
+        else (actual[key(rule)] ?: false)
+        if (locked && !VerifyGate.requirementFor(ctx, rule).isNone) {
+            pendingDelete = rule
+        } else {
+            deleting = rule
         }
     }
 
@@ -270,12 +309,7 @@ fun FavoritesScreen(
                     Column(
                         Modifier
                             .padding(6.dp)
-                            .clickable {
-                                gridView = false
-                                uiPrefs.edit().putBoolean("workbench_grid", false).apply()
-                                expanded.clear()
-                                expanded[pkg] = true
-                            }
+                            .clickable { gridDetailPkg = pkg }
                             .padding(4.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
@@ -760,5 +794,123 @@ private fun QuickPanel(
             })
         }
         Spacer(Modifier.height(6.dp))
+    }
+}
+
+/**
+ * 快捷入口磁贴：与宫格一致的图标+文字样式。
+ */
+@Composable
+private fun QuickTile(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Card(modifier.clickable(onClick = onClick)) {
+        Column(
+            Modifier.fillMaxWidth().padding(vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(label, style = MaterialTheme.typography.labelMedium)
+        }
+    }
+}
+
+/**
+ * 宫格点击后的 App 规则弹窗：只展示该 App 的界面，可直接编辑/解锁/删除。
+ */
+@Composable
+private fun GridDetailDialog(
+    pkg: String,
+    onClose: () -> Unit,
+    onEdit: (LockRule) -> Unit,
+    onDeleteRequest: (LockRule) -> Unit,
+    onToggle: (LockRule, Boolean) -> Unit,
+    busy: Map<String, Boolean>,
+) {
+    val memberRules = AppStore.rules.filter { it.packageName == pkg }
+    val lockedCount = memberRules.count { it.locked }
+    val label = AppStore.findApp(pkg)?.label ?: pkg.substringAfterLast('.')
+
+    Dialog(onDismissRequest = onClose) {
+        Card(shape = MaterialTheme.shapes.small) {
+            Column(Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AppIcon(pkg, 40.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(label, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "已拦截 $lockedCount/${memberRules.size} 个界面",
+                            style = MaterialTheme.typography.labelSmall
+                                .copy(fontFeatureSettings = "tnum"),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    TextButton(onClick = onClose) { Text("关闭") }
+                }
+                Spacer(Modifier.height(8.dp))
+                Column(
+                    Modifier
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    memberRules.forEach { rule ->
+                        val locked = if (rule.block) rule.locked
+                        else AppStore.isDisabled(rule.packageName, rule.activityName)
+                        val ruleBusy = busy["${rule.packageName}/${rule.activityName}"] == true
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    rule.note.ifBlank { rule.activityName.substringAfterLast('.') },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    rule.activityName.substringAfterLast('.') +
+                                        if (locked) " · 拦截中" else "",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            IconButton(onClick = { onEdit(rule) }, enabled = !ruleBusy) {
+                                Icon(
+                                    Icons.Default.Edit,
+                                    contentDescription = "编辑",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            IconButton(onClick = { onDeleteRequest(rule) }, enabled = !ruleBusy) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "删除",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Switch(
+                                checked = locked,
+                                enabled = !ruleBusy,
+                                onCheckedChange = { want -> onToggle(rule, want) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
