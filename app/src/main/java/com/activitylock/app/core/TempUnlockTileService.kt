@@ -33,12 +33,15 @@ class TempUnlockTileService : TileService() {
             refresh()
             return
         }
-        // 拉起验证页（验证通过后豁免 + 自动打开该 App）
-        startActivityAndCollapse(
-            android.content.Intent(this, com.activitylock.app.ui.TempUnlockActivity::class.java)
-                .putExtra("pkg", last)
-                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        // 拉起验证页：Android 14+ 仅支持 PendingIntent 重载（Intent 重载已禁止）
+        val intent = android.content.Intent(this, com.activitylock.app.ui.TempUnlockActivity::class.java)
+            .putExtra("pkg", last)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        val pi = android.app.PendingIntent.getActivity(
+            this, last.hashCode(), intent,
+            android.app.PendingIntent.FLAG_IMMUTABLE
         )
+        startActivityAndCollapse(pi)
         refresh()
     }
 
