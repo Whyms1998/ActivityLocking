@@ -67,6 +67,22 @@
         </receiver>
 
         <service
+            android:name=".core.TempUnlockTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_key"
+            android:label="临时解锁"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <activity
+            android:name=".ui.TempUnlockActivity"
+            android:exported="false"
+            android:theme="@style/Theme.UnlockGate" />
+
+        <service
             android:name=".core.FocusService"
             android:exported="false"
             android:foregroundServiceType="specialUse">

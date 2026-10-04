@@ -21,6 +21,9 @@ object BlockStats {
         val recent: List<Entry>,
     )
 
+    /** 最近一次被拦截的包名（取 recent 最新一条）。 */
+    fun lastBlockedPkg(): String? = read()?.recent?.firstOrNull()?.pkg
+
     fun read(): Stats? {
         val r = ShizukuManager.run("cat", PATH)
         if (r.code != 0 && r.output.isBlank()) return null

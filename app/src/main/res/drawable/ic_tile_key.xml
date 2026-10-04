@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 钥匙 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M7,7.5 a4.5,4.5 0 1 0 0.01,0 Z M11,10.6 h10 v2.8 h-10 Z M17.2,13.4 h2.8 v3.2 h-2.8 Z M20.4,13.4 h2.6 v3.2 h-2.6 Z" />
+</vector>
