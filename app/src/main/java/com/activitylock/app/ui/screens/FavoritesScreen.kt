@@ -143,6 +143,7 @@ fun FavoritesScreen(
     onOpenSchedules: () -> Unit = {},
     onOpenQuota: () -> Unit = {},
     onOpenStats: () -> Unit = {},
+    onOpenFocus: () -> Unit = {},
 ) {
     val rules = AppStore.rules
     val actual = remember { mutableStateMapOf<String, Boolean>() }
@@ -272,6 +273,7 @@ fun FavoritesScreen(
             onOpenSchedules = onOpenSchedules,
             onOpenQuota = onOpenQuota,
             onOpenStats = onOpenStats,
+            onOpenFocus = onOpenFocus,
         )
 
         if (rules.isEmpty()) {
@@ -765,6 +767,7 @@ private fun QuickPanel(
     onOpenSchedules: () -> Unit,
     onOpenQuota: () -> Unit,
     onOpenStats: () -> Unit,
+    onOpenFocus: () -> Unit,
 ) {
     val ctx = LocalContext.current
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
@@ -800,6 +803,9 @@ private fun QuickPanel(
             AssistChip(onClick = onOpenQuota, modifier = Modifier.weight(1f), label = {
                 Text("限额", maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             })
+            AssistChip(onClick = onOpenFocus, modifier = Modifier.weight(1f), label = {
+                Text("专注", maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            })
             AssistChip(onClick = onOpenStats, modifier = Modifier.weight(1f), label = {
                 Text("统计", maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             })
@@ -808,32 +814,6 @@ private fun QuickPanel(
     }
 }
 
-/**
- * 快捷入口磁贴：与宫格一致的图标+文字样式。
- */
-@Composable
-private fun QuickTile(
-    label: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    Card(modifier.clickable(onClick = onClick)) {
-        Column(
-            Modifier.fillMaxWidth().padding(vertical = 10.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Icon(
-                icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(22.dp)
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(label, style = MaterialTheme.typography.labelMedium)
-        }
-    }
-}
 
 /**
  * 宫格点击后的 App 规则弹窗：只展示该 App 的界面，可直接编辑/解锁/删除。

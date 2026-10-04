@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="admin_description">激活后「应用锁」无法被直接卸载，用于保障自律计划不被绕过。</string>
     <string name="inspector_desc">Activity 查询：在使用其他应用时，用悬浮条显示当前界面的包名和类名。本服务不读取屏幕内容。</string>
 </resources>

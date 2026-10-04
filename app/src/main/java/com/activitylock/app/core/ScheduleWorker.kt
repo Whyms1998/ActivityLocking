@@ -19,6 +19,7 @@ class ScheduleWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
     override suspend fun doWork(): Result {
         AppStore.ensureInit(applicationContext)
         ScheduleEngine.reconcile(applicationContext, killNow = false)
+        FocusEngine.reconcile(applicationContext)
         return Result.success()
     }
 
@@ -46,6 +47,7 @@ class BootReceiver : BroadcastReceiver() {
                 AppStore.ensureInit(context)
                 ScheduleWorker.ensureScheduled(context)
                 ScheduleEngine.reconcile(context, killNow = false)
+                FocusEngine.reconcile(context)
             } finally {
                 result.finish()
             }

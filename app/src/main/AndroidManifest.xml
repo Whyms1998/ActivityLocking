@@ -52,6 +52,29 @@
             android:exported="true"
             android:theme="@style/Theme.UnlockGate" />
 
+        <receiver
+            android:name=".core.AdminReceiver"
+            android:description="@string/admin_description"
+            android:label="防卸载保护"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".core.FocusService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="focus-session-timer" />
+        </service>
+
         <service
             android:name=".core.QuotaService"
             android:exported="false"

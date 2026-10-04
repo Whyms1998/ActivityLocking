@@ -14,7 +14,7 @@ import java.io.File
  */
 object AmsController {
 
-    private const val WATCHER_VERSION = 11
+    private const val WATCHER_VERSION = 12
     private const val VERSION_MARKER = "/data/local/tmp/al_watcher.ver"
 
     fun rulesFile(): File {
@@ -52,6 +52,16 @@ object AmsController {
                     org.json.JSONObject()
                         .put("p", pkg)
                         .put("r", QUOTA_GATE_COMPONENT)
+                )
+            }
+            // 专注会话层：会话进行中目标 App 整包静默拦截（已超额的保持额度页跳转）
+            val focus = FocusState.focusPackages(ctx)
+            for (pkg in focus) {
+                if (over.contains(pkg)) continue
+                arr.put(
+                    org.json.JSONObject()
+                        .put("p", pkg)
+                        .put("r", "")
                 )
             }
             val f = rulesFile()

@@ -32,6 +32,8 @@ import com.activitylock.app.ui.screens.PresetScreen
 import com.activitylock.app.ui.screens.QuotaScreen
 import com.activitylock.app.ui.screens.ScheduleScreen
 import com.activitylock.app.ui.screens.SceneScreen
+import com.activitylock.app.ui.screens.AdminScreen
+import com.activitylock.app.ui.screens.FocusScreen
 import com.activitylock.app.ui.screens.StatsScreen
 import com.activitylock.app.ui.screens.SchemeLibraryScreen
 import com.activitylock.app.ui.screens.SettingsScreen
@@ -51,6 +53,8 @@ sealed interface Screen {
     data object Quota : Screen
     data object Scenes : Screen
     data object Stats : Screen
+    data object Focus : Screen
+    data object Admin : Screen
     data class Detail(val packageName: String) : Screen
 }
 
@@ -137,7 +141,9 @@ private fun AppRoot() {
                     onOpenSchedules = { stack.add(Screen.Schedules) },
                     onOpenQuota = { stack.add(Screen.Quota) },
                     onOpenScenes = { stack.add(Screen.Scenes) },
-                    onOpenStats = { stack.add(Screen.Stats) }
+                    onOpenStats = { stack.add(Screen.Stats) },
+                    onOpenFocus = { stack.add(Screen.Focus) },
+                    onOpenAdmin = { stack.add(Screen.Admin) }
                 )
                 Screen.Verify -> com.activitylock.app.ui.screens.VerifySettingsScreen(
                     onBack = { stack.removeAt(stack.size - 1) }
@@ -164,6 +170,12 @@ private fun AppRoot() {
                     onBack = { stack.removeAt(stack.size - 1) }
                 )
                 Screen.Stats -> StatsScreen(
+                    onBack = { stack.removeAt(stack.size - 1) }
+                )
+                Screen.Focus -> FocusScreen(
+                    onBack = { stack.removeAt(stack.size - 1) }
+                )
+                Screen.Admin -> AdminScreen(
                     onBack = { stack.removeAt(stack.size - 1) }
                 )
                 Screen.Connection -> ConnectionScreen(

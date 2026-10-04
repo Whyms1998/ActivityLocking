@@ -63,6 +63,8 @@ fun SettingsScreen(
     onOpenQuota: () -> Unit,
     onOpenScenes: () -> Unit,
     onOpenStats: () -> Unit,
+    onOpenFocus: () -> Unit,
+    onOpenAdmin: () -> Unit,
 ) {
     var status by remember { mutableStateOf(shizukuStatusText()) }
     var tick by remember { mutableStateOf(0) }
@@ -96,6 +98,12 @@ fun SettingsScreen(
             title = "场景模式",
             subtitle = "方案集合一键启用/停用",
             onClick = onOpenScenes
+        )
+        SettingsEntry(
+            icon = Icons.Default.PlayArrow,
+            title = "专注会话",
+            subtitle = "一键锁定所选 App，到时自动恢复",
+            onClick = onOpenFocus
         )
         SettingsEntry(
             icon = Icons.Default.DateRange,
@@ -140,6 +148,12 @@ fun SettingsScreen(
             title = "连接",
             subtitle = "Shizuku 状态与授权",
             onClick = onOpenConnection
+        )
+        SettingsEntry(
+            icon = Icons.Default.Build,
+            title = "防卸载保护",
+            subtitle = "激活后无法直接卸载或清除数据",
+            onClick = onOpenAdmin
         )
         SettingsEntry(
             icon = Icons.Default.Lock,

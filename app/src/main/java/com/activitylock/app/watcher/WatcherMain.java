@@ -29,7 +29,7 @@ public class WatcherMain {
     static final String LOG_PATH = "/data/local/tmp/al_watcher.log";
     /** APP 用该文件判断常驻进程是否为当前版本（不匹配则杀掉重启）。 */
     static final String VERSION_MARKER = "/data/local/tmp/al_watcher.ver";
-    static final int WATCHER_VERSION = 11;
+    static final int WATCHER_VERSION = 12;
 
     /** 组件全名 -> 跳转深链（空串表示仅拦截、不跳转）。 */
     static final ConcurrentHashMap<String, String> BLOCKED = new ConcurrentHashMap<>();
@@ -467,15 +467,14 @@ public class WatcherMain {
             // 包级超额拦截：额度用完的 App，任何界面启动都拒绝并拉起额度提示页
             String gate = PKG_BLOCKED.get(pkg);
             if (gate != null) {
-                log("BLOCK(pkg-over-quota) " + pkg + (userLaunch ? " (launcher)" : ""));
+                log("BLOCK(pkg) " + pkg + (userLaunch ? " (launcher)" : ""));
                 countBlock(pkg, full);
                 Long lastG = LAST_REDIRECT.get(pkg);
-                if (lastG != null && now - lastG < REDIRECT_DEDUPE_MS) {
-                    log("BLOCK (dedupe) " + pkg);
-                    return false;
+                boolean dedupe = lastG != null && now - lastG < REDIRECT_DEDUPE_MS;
+                if (!gate.isEmpty() && !dedupe) {
+                    LAST_REDIRECT.put(pkg, now);
+                    maybeRedirect(pkg, intent, gate);
                 }
-                LAST_REDIRECT.put(pkg, now);
-                maybeRedirect(pkg, intent, gate);
                 return false;
             }
 

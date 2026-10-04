@@ -5,6 +5,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import com.activitylock.app.core.AppStore
 import com.activitylock.app.core.AmsController
+import com.activitylock.app.core.FocusEngine
+import com.activitylock.app.core.FocusState
 import com.activitylock.app.core.QuotaService
 import com.activitylock.app.core.ScheduleEngine
 import com.activitylock.app.core.ScheduleWorker
@@ -44,6 +46,11 @@ class LockApp : Application() {
                 if (AppStore.schedules.isNotEmpty()) {
                     ScheduleWorker.ensureScheduled(this@LockApp)
                     ScheduleEngine.reconcile(this@LockApp, killNow = false)
+                }
+                // 专注会话：到点收尾/恢复倒计时服务
+                FocusEngine.reconcile(this@LockApp)
+                if (FocusState.load(this@LockApp) != null) {
+                    com.activitylock.app.core.FocusService.start(this@LockApp)
                 }
             }
         }
