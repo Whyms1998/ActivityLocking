@@ -113,6 +113,14 @@ object VerifyGate {
         else Requirement(MODE_NONE, 0, emptyList())
     }
 
+    /** 条件强度排序：用于判断一次修改是否属于"降低门槛"。 */
+    fun strength(mode: String): Int = when (mode) {
+        METHOD_PASSWORD -> 3
+        METHOD_QUIZ -> 2
+        METHOD_DELAY -> 1
+        else -> 0
+    }
+
     /** 生成一道难度适中的口算题（题面，答案）。 */
     fun genQuiz(): Pair<String, Int> {
         val r = java.util.Random()

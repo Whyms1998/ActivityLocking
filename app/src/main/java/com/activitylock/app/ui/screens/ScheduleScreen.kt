@@ -41,6 +41,8 @@ import androidx.compose.ui.unit.dp
 import com.activitylock.app.core.AppStore
 import com.activitylock.app.core.LockSchedule
 import com.activitylock.app.core.ScheduleEngine
+import com.activitylock.app.core.VerifyGate
+import com.activitylock.app.ui.components.UnlockVerifyDialog
 
 private fun format(h: Int, m: Int) = "%02d:%02d".format(h, m)
 
@@ -53,6 +55,7 @@ fun ScheduleScreen(onBack: () -> Unit) {
     var editing by remember { mutableStateOf<LockSchedule?>(null) }
     var creating by remember { mutableStateOf(false) }
     var killEnabled by remember { mutableStateOf(ScheduleEngine.screenOffKillEnabled(context)) }
+    var pendingVerifyDelete by remember { mutableStateOf<LockSchedule?>(null) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -128,12 +131,32 @@ fun ScheduleScreen(onBack: () -> Unit) {
                             schedule = s,
                             onToggle = { AppStore.upsertSchedule(s.copy(enabled = it)) },
                             onEdit = { editing = s },
-                            onDelete = { AppStore.removeSchedule(s.id) }
+                            onDelete = {
+                                // 有生效窗口时删除计划=提前结束并按快照解锁，需要验证
+                                if (ScheduleEngine.anyActive(AppStore.schedules)) {
+                                    pendingVerifyDelete = s
+                                } else {
+                                    AppStore.removeSchedule(s.id)
+                                }
+                            }
                         )
                     }
                 }
             }
         }
+    }
+
+    pendingVerifyDelete?.let { s ->
+        UnlockVerifyDialog(
+            requirement = VerifyGate.bulkRequirement(context, AppStore.rules),
+            title = "删除计划验证",
+            hint = "当前有生效中的计划窗口，删除将提前结束并按快照恢复解锁状态",
+            onConfirmed = {
+                pendingVerifyDelete = null
+                AppStore.removeSchedule(s.id)
+            },
+            onDismiss = { pendingVerifyDelete = null }
+        )
     }
 
     if (creating || editing != null) {

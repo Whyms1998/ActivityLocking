@@ -394,11 +394,40 @@ fun FavoritesScreen() {
         }
         var vPwd by remember(rule) { mutableStateOf(rule.verifyPassword ?: "") }
         var quota by remember(rule) { mutableStateOf(rule.quotaMin?.toString() ?: "") }
+        var pendingWeakSave by remember(rule) { mutableStateOf(false) }
         val globalReq = VerifyGate.globalRequirement(ctx)
         val globalDesc = when (globalReq.mode) {
             VerifyGate.MODE_NONE -> "已关闭"
             VerifyGate.METHOD_DELAY -> "等待${globalReq.delaySec}秒"
+            VerifyGate.METHOD_QUIZ -> "答题"
             else -> "密码"
+        }
+        val curReq = VerifyGate.requirementFor(ctx, rule)
+        // 修改后的有效解锁条件（复刻 requirementFor 的解析）
+        val afterMode: String = when (vMode) {
+            VerifyGate.MODE_NONE -> VerifyGate.MODE_NONE
+            VerifyGate.METHOD_DELAY, VerifyGate.METHOD_PASSWORD, VerifyGate.METHOD_QUIZ ->
+                vMode ?: VerifyGate.METHOD_DELAY
+            else -> globalReq.mode
+        }
+        // 降低门槛（改弱条件/缩短等待）且界面处于锁定中 → 保存前需过当前验证
+        val weakening = rule.locked && (
+            VerifyGate.strength(afterMode) < VerifyGate.strength(curReq.mode) ||
+                (afterMode == VerifyGate.METHOD_DELAY && curReq.mode == VerifyGate.METHOD_DELAY &&
+                    (vDelay.toIntOrNull() ?: VerifyGate.delaySeconds(ctx)) < curReq.delaySec)
+            )
+        fun doSave() {
+            AppStore.updateNote(rule.packageName, rule.activityName, text)
+            AppStore.updateRedirect(rule.packageName, rule.activityName, redirect)
+            AppStore.updateVerify(
+                rule.packageName, rule.activityName,
+                vMode, vDelay.trim().toIntOrNull(), vPwd
+            )
+            AppStore.updateQuota(rule.packageName, rule.activityName, quota.trim().toIntOrNull())
+            // 跳转目标/超额状态影响 Watcher 规则，立即同步；限额需要守护服务
+            AmsController.writeRules()
+            com.activitylock.app.core.QuotaService.startIfQuotaConfigured(ctx)
+            editing = null
         }
         AlertDialog(
             onDismissRequest = { editing = null },
@@ -509,22 +538,25 @@ fun FavoritesScreen() {
             },
             confirmButton = {
                 TextButton(onClick = {
-                    AppStore.updateNote(rule.packageName, rule.activityName, text)
-                    AppStore.updateRedirect(rule.packageName, rule.activityName, redirect)
-                    AppStore.updateVerify(
-                        rule.packageName, rule.activityName,
-                        vMode, vDelay.trim().toIntOrNull(), vPwd
-                    )
-                    AppStore.updateQuota(rule.packageName, rule.activityName, quota.trim().toIntOrNull())
-                    // 跳转目标/超额状态影响 Watcher 规则，立即同步；限额需要守护服务
-                    AmsController.writeRules()
-                    com.activitylock.app.core.QuotaService.startIfQuotaConfigured(ctx)
-                    editing = null
+                    if (weakening) pendingWeakSave = true else doSave()
                 }) { Text("保存") }
             },
             dismissButton = {
                 TextButton(onClick = { editing = null }) { Text("取消") }
             }
         )
+
+        if (pendingWeakSave) {
+            UnlockVerifyDialog(
+                requirement = curReq,
+                title = "降低门槛验证",
+                hint = "本次修改会降低该界面的解锁门槛",
+                onConfirmed = {
+                    pendingWeakSave = false
+                    doSave()
+                },
+                onDismiss = { pendingWeakSave = false }
+            )
+        }
     }
 }

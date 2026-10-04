@@ -32,9 +32,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.activitylock.app.core.AppStore
 import com.activitylock.app.core.VerifyGate
 import com.activitylock.app.ui.components.UnlockVerifyDialog
 
+/**
+ * 解锁验证全局设置。
+ * 防绕过原则：验证开启期间，任何削弱性修改（关闭、换方式、改密码、缩短等待）
+ * 每一次都必须当场通过"最强验证"（全局 + 各界面单独条件的最大值），
+ * 不存在"本次会话已验证"的通行证——否则等待 5 秒就能关掉整个验证体系。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VerifySettingsScreen(onBack: () -> Unit) {
@@ -44,13 +51,12 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
     var password by remember { mutableStateOf(VerifyGate.password(ctx)) }
     var delaySec by remember { mutableStateOf(VerifyGate.delaySeconds(ctx)) }
 
-    // 验证开启期间，削弱性修改（关闭/换方式/改密码）需先通过当前验证
-    var verifiedThisSession by remember { mutableStateOf(false) }
-    val editLocked = enabled && !verifiedThisSession
+    // 削弱性修改：逐次验证，无会话通行证
     var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     fun requireVerify(action: () -> Unit) {
-        if (editLocked) pendingAction = action else action()
+        val req = VerifyGate.bulkRequirement(ctx, AppStore.rules)
+        if (!req.isNone) pendingAction = action else action()
     }
 
     fun persist() {
@@ -77,10 +83,11 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
-            if (editLocked) {
+            if (enabled) {
                 Card(Modifier.fillMaxWidth()) {
                     Text(
-                        "验证已开启：修改设置前需先通过当前验证。",
+                        "验证开启中：关闭验证、切换方式、修改密码、缩短等待，" +
+                            "每一次都需要当场通过最强验证（含各界面单独设置的密码与答题）。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(12.dp)
@@ -114,7 +121,6 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                             } else {
                                 requireVerify {
                                     enabled = false
-                                    verifiedThisSession = false
                                     persist()
                                 }
                             }
@@ -145,7 +151,6 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 TextButton(
-                                    enabled = !editLocked,
                                     onClick = { requireVerify { delaySec = (delaySec - 5).coerceAtLeast(5); persist() } }
                                 ) { Text("−") }
                                 Text(
@@ -153,9 +158,9 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                                     style = MaterialTheme.typography.titleMedium,
                                     modifier = Modifier.padding(horizontal = 12.dp)
                                 )
+                                // 延长等待是加强，不需要验证
                                 TextButton(
-                                    enabled = !editLocked,
-                                    onClick = { requireVerify { delaySec = (delaySec + 5).coerceAtMost(60); persist() } }
+                                    onClick = { delaySec = (delaySec + 5).coerceAtMost(600); persist() }
                                 ) { Text("＋") }
                             }
                         }
@@ -186,12 +191,12 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(start = 40.dp, top = 8.dp, end = 16.dp),
-                                enabled = !editLocked,
+                                enabled = true,
                                 placeholder = { Text("设置解锁密码") },
                                 singleLine = true
                             )
                             TextButton(
-                                enabled = !editLocked && password.isNotBlank(),
+                                enabled = password.isNotBlank(),
                                 onClick = { requireVerify { persist() } }
                             ) { Text("保存密码") }
                         }
@@ -202,8 +207,9 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
             Spacer(Modifier.height(16.dp))
             Text(
                 "验证在收藏夹解锁、删除和磁贴「全部解锁」时生效；锁定操作不受影响。\n" +
-                    "每个界面可以在收藏夹「编辑」里单独设置解锁条件（无需验证 / 等待倒计时 / 专属密码），" +
-                    "单独设置优先于全局；磁贴全部解锁会取所有界面的最强条件。",
+                    "每个界面可以在收藏夹「编辑」里单独设置解锁条件（无需验证 / 等待倒计时 / 答题 / 专属密码），" +
+                    "单独设置优先于全局；磁贴全部解锁会取所有界面的最强条件。\n" +
+                    "降低任何门槛的修改（包括把某界面改成无需验证）都会要求当场验证。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -212,8 +218,10 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
 
     pendingAction?.let { action ->
         UnlockVerifyDialog(
+            requirement = VerifyGate.bulkRequirement(ctx, AppStore.rules),
+            title = "修改验证",
+            hint = "验证开启期间，削弱性修改需当场通过最强验证",
             onConfirmed = {
-                verifiedThisSession = true
                 pendingAction = null
                 action()
             },

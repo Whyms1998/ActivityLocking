@@ -35,6 +35,13 @@ object QuotaState {
         }
     }
 
+    /** 单个包解除超额状态（验证通过后移除限额时调用）。 */
+    fun clearOver(ctx: Context, pkg: String) {
+        val p = prefs(ctx)
+        val next = overPackages(ctx) - pkg
+        p.edit().putString("date", today()).putStringSet("over", next).apply()
+    }
+
     /** 跨天重置。返回 true 表示发生了重置（调用方应重写拦截清单）。 */
     fun resetIfNewDay(ctx: Context): Boolean {
         val p = prefs(ctx)

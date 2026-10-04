@@ -45,7 +45,9 @@ import com.activitylock.app.core.LockRule
 import com.activitylock.app.core.QuotaService
 import com.activitylock.app.core.QuotaState
 import com.activitylock.app.core.UsageTracker
+import com.activitylock.app.core.VerifyGate
 import com.activitylock.app.ui.components.AppIcon
+import com.activitylock.app.ui.components.UnlockVerifyDialog
 
 private fun refresh(ctx: android.content.Context) {
     com.activitylock.app.core.AmsController.writeRules()
@@ -61,6 +63,7 @@ fun QuotaScreen(onBack: () -> Unit) {
     val hasPermission = UsageTracker.hasPermission(context)
     var adding by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf<String?>(null) }
+    var pendingVerifyRemove by remember { mutableStateOf<String?>(null) }
 
     val notifPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -186,20 +189,43 @@ fun QuotaScreen(onBack: () -> Unit) {
     }
 
     removing?.let { pkg ->
+        val over = pkg in QuotaState.overPackages(context)
         AlertDialog(
             onDismissRequest = { removing = null },
             title = { Text("移除限额？") },
-            text = { Text("「${AppStore.findApp(pkg)?.label ?: pkg}」将不再限制每日使用时长。") },
+            text = { Text(
+                if (over) "「${AppStore.findApp(pkg)?.label ?: pkg}」今日已超额。移除限额将立刻恢复该 App 的使用，需要先通过验证。"
+                else "「${AppStore.findApp(pkg)?.label ?: pkg}」将不再限制每日使用时长。"
+            ) },
             confirmButton = {
                 TextButton(onClick = {
-                    for (r in rules.filter { it.packageName == pkg }) {
-                        AppStore.updateQuota(r.packageName, r.activityName, null)
-                    }
-                    refresh(context)
                     removing = null
-                }) { Text("移除") }
+                    if (over) pendingVerifyRemove = pkg else {
+                        for (r in rules.filter { it.packageName == pkg }) {
+                            AppStore.updateQuota(r.packageName, r.activityName, null)
+                        }
+                        refresh(context)
+                    }
+                }) { Text(if (over) "验证并移除" else "移除") }
             },
             dismissButton = { TextButton(onClick = { removing = null }) { Text("取消") } }
+        )
+    }
+
+    pendingVerifyRemove?.let { pkg ->
+        UnlockVerifyDialog(
+            requirement = VerifyGate.bulkRequirement(context, AppStore.rules),
+            title = "移除限额验证",
+            hint = "该 App 今日已超额，移除限额等于提前解锁它",
+            onConfirmed = {
+                pendingVerifyRemove = null
+                for (r in rules.filter { it.packageName == pkg }) {
+                    AppStore.updateQuota(r.packageName, r.activityName, null)
+                }
+                QuotaState.clearOver(context, pkg)
+                refresh(context)
+            },
+            onDismiss = { pendingVerifyRemove = null }
         )
     }
 }
