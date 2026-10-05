@@ -35,8 +35,8 @@ public class WatcherMain {
     static final ConcurrentHashMap<String, String> BLOCKED = new ConcurrentHashMap<>();
     /** 包名 -> 超额提示页组件（额度用完的 App 整包拒绝所有启动）。 */
     static final ConcurrentHashMap<String, String> PKG_BLOCKED = new ConcurrentHashMap<>();
-    /** 包名 -> 豁免截止时间（epoch ms）：临时解锁期间放行该 App 的所有启动。 */
-    static final ConcurrentHashMap<String, Long> EXEMPT = new ConcurrentHashMap<>();
+    /** 全局豁免截止时间（epoch ms）：临时解锁期间放行所有启动，0=无。 */
+    static volatile long GLOBAL_EXEMPT_UNTIL = 0;
     /** 按天拦截计数（ISO 日期 -> 次数），供周报趋势。 */
     static final ConcurrentHashMap<String, Long> STATS_DAILY = new ConcurrentHashMap<>();
     /** 额度提示页（本 App），超额包的拦截跳转目标。 */
@@ -300,7 +300,6 @@ public class WatcherMain {
             log("reload file: " + sb.substring(0, Math.min(sb.length(), 200)));
             ConcurrentHashMap<String, String> next = new ConcurrentHashMap<>();
             ConcurrentHashMap<String, String> nextPkgs = new ConcurrentHashMap<>();
-            ConcurrentHashMap<String, Long> nextExempt = new ConcurrentHashMap<>();
             for (int i = 0; i < arr.length(); i++) {
                 Object el = arr.get(i);
                 if (el instanceof org.json.JSONObject) {
@@ -308,11 +307,6 @@ public class WatcherMain {
                     String pkg = o.optString("p", "");
                     if (!pkg.isEmpty()) {
                         nextPkgs.put(pkg, o.optString("r", "")); // 包级拦截（超额）
-                        continue;
-                    }
-                    String ep = o.optString("e", "");
-                    if (!ep.isEmpty()) {
-                        nextExempt.put(ep, o.optLong("u", 0)); // 临时豁免（随 reload 统一合并）
                         continue;
                     }
                     String comp = o.optString("c", "");
@@ -486,10 +480,9 @@ public class WatcherMain {
             if (intent == null) return true;
             ComponentName cn = intent.getComponent();
             if (cn == null) return true;
-            // 临时豁免：该包处于"临时解锁"期，直接放行（含过期自判）
-            Long exemptUntil = EXEMPT.get(pkg);
-            if (exemptUntil != null && System.currentTimeMillis() < exemptUntil) {
-                log("ALLOW(exempt) " + pkg);
+            // 全局临时豁免：临时解锁期间放行一切（优先于规则/包级/超额拦截）
+            if (GLOBAL_EXEMPT_UNTIL > 0 && System.currentTimeMillis() < GLOBAL_EXEMPT_UNTIL) {
+                log("ALLOW(global-exempt) " + pkg + "/" + cn.getClassName());
                 return true;
             }
             if (BLOCKED.isEmpty() && PKG_BLOCKED.isEmpty()) return true;

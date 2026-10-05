@@ -64,18 +64,16 @@ object AmsController {
                         .put("r", "")
                 )
             }
-            // 临时豁免层：临时解锁期间放行该 App 的所有启动
-            // （锁定强度开启"计划窗口内禁用豁免"时，生效中的计划窗口内不发豁免条目）
+            // 临时解锁层：全局豁免（锁定强度开启"计划窗口内禁用"时不激活）
             val exemptSuppressed = LockStrength.noExemptInSchedule(ctx) &&
                 ScheduleEngine.anyActive(AppStore.schedules)
-            if (!exemptSuppressed) {
-                for ((pkg, until) in UnlockExemptions.active(ctx)) {
-                    arr.put(
-                        org.json.JSONObject()
-                            .put("e", pkg)
-                            .put("u", until)
-                    )
-                }
+            val exemptUntil = UnlockExemptions.until(ctx)
+            if (!exemptSuppressed && exemptUntil > System.currentTimeMillis()) {
+                arr.put(
+                    org.json.JSONObject()
+                        .put("g", 1)
+                        .put("u", exemptUntil)
+                )
             }
             val f = rulesFile()
             f.parentFile?.mkdirs()

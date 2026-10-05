@@ -2,12 +2,11 @@ package com.activitylock.app.core
 
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
-import androidx.core.content.ContextCompat
 
 /**
  * 「临时解锁」控制中心磁贴：钥匙图标。
- * 点击 → 定位最近被拦截的 App → 全屏验证 → 豁免 LockStrength 时长并自动打开该 App。
- * 豁免期内磁贴为激活态，再点 = 立即恢复拦截。
+ * 点击 → 全屏验证（所有锁定界面的最强条件）→ 全部临时解锁 LockStrength 时长 → 到期自动落锁。
+ * 豁免期内磁贴为激活态，再点 = 立即全部落锁。
  */
 class TempUnlockTileService : TileService() {
 
@@ -18,52 +17,51 @@ class TempUnlockTileService : TileService() {
     override fun onClick() {
         super.onClick()
         AppStore.ensureInit(applicationContext)
-        val last = BlockStats.lastBlockedPkg()
-        val activeUntil = UnlockExemptions.active(applicationContext)[last]
+        val until = UnlockExemptions.until(applicationContext)
 
-        if (last != null && activeUntil != null && activeUntil > System.currentTimeMillis()) {
-            // 豁免中：再点 = 立即恢复拦截
-            UnlockExemptions.remove(applicationContext, last)
+        if (until > System.currentTimeMillis()) {
+            // 豁免中：再点 = 立即全部落锁
+            UnlockExemptions.removeGlobal(applicationContext)
             AmsController.writeRules()
-            ShizukuManager.run("am", "force-stop", last)
+            val pkgs = AppStore.rules.filter { it.locked }.map { it.packageName }.distinct()
+            for (p in pkgs) ShizukuManager.run("am", "force-stop", p)
             refresh()
             return
         }
-        if (last == null) {
+        if (AppStore.rules.none { it.locked }) {
             refresh()
             return
         }
-        // 拉起验证页：Android 14+ 仅支持 PendingIntent 重载（Intent 重载已禁止）
-        val intent = android.content.Intent(this, com.activitylock.app.ui.TempUnlockActivity::class.java)
-            .putExtra("pkg", last)
+        // 拉起全屏验证页（全局临时解锁）
+        val i = android.content.Intent(this, com.activitylock.app.ui.TempUnlockActivity::class.java)
             .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-        val pi = android.app.PendingIntent.getActivity(
-            this, last.hashCode(), intent,
-            android.app.PendingIntent.FLAG_IMMUTABLE
+        startActivityAndCollapse(
+            android.app.PendingIntent.getActivity(
+                this, 2001, i,
+                android.app.PendingIntent.FLAG_IMMUTABLE
+            )
         )
-        startActivityAndCollapse(pi)
         refresh()
     }
 
     private fun refresh() {
         val tile = qsTile ?: return
         AppStore.ensureInit(applicationContext)
-        val last = BlockStats.lastBlockedPkg()
-        val activeUntil = UnlockExemptions.active(applicationContext)[last]
+        val until = UnlockExemptions.until(applicationContext)
+        val lockedCount = AppStore.rules.count { it.locked }
         when {
-            last == null -> {
+            lockedCount == 0 -> {
                 tile.state = Tile.STATE_UNAVAILABLE
-                tile.subtitle = "暂无最近拦截"
+                tile.subtitle = "没有锁定中的界面"
             }
-            activeUntil != null && activeUntil > System.currentTimeMillis() -> {
+            until > System.currentTimeMillis() -> {
                 tile.state = Tile.STATE_ACTIVE
-                val remainMin = ((activeUntil - System.currentTimeMillis()) / 60_000).toInt() + 1
-                tile.subtitle = "临时解锁中 · 剩余 ${remainMin} 分（点按恢复）"
+                val remainMin = ((until - System.currentTimeMillis()) / 60_000).toInt() + 1
+                tile.subtitle = "临时解锁中 · 剩余 ${remainMin} 分（点按落锁）"
             }
             else -> {
                 tile.state = Tile.STATE_INACTIVE
-                val label = AppStore.findApp(last)?.label ?: last.substringAfterLast('.')
-                tile.subtitle = "解锁 ${LockStrength.tempUnlockMin(applicationContext)} 分钟（${label}）"
+                tile.subtitle = "全部临时解锁 ${LockStrength.tempUnlockMin(applicationContext)} 分钟"
             }
         }
         tile.updateTile()

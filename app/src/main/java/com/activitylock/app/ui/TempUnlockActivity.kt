@@ -22,39 +22,34 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.activitylock.app.core.AmsController
 import com.activitylock.app.core.AppStore
-import com.activitylock.app.core.BlockStats
 import com.activitylock.app.core.LockStrength
 import com.activitylock.app.core.UnlockExemptions
 import com.activitylock.app.core.VerifyGate
 import com.activitylock.app.ui.theme.ActivityLockTheme
 
 /**
- * 临时解锁验证页（磁贴拉起）：通过该 App 的解锁条件后，
- * 豁免 LockStrength 时长并自动打开该 App。
+ * 临时解锁验证页（磁贴拉起）：通过所有锁定界面的最强解锁条件后，
+ * 全部临时解锁 LockStrength 时长，到期自动落锁。
  */
 class TempUnlockActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppStore.ensureInit(applicationContext)
-        val pkg = intent.getStringExtra("pkg")
-        if (pkg == null) { finish(); return }
         val duration = LockStrength.tempUnlockMin(this)
-        val label = AppStore.findApp(pkg)?.label ?: pkg.substringAfterLast('.')
-        val memberReq = VerifyGate.bulkRequirement(
-            this, AppStore.rules.filter { it.packageName == pkg }
-        )
+        val lockedRules = AppStore.rules.filter { it.locked }
+        val memberReq = VerifyGate.bulkRequirement(this, lockedRules)
         val requirement = if (memberReq.isNone) {
             VerifyGate.Requirement(VerifyGate.METHOD_QUIZ, 0, emptyList())
         } else memberReq
@@ -74,7 +69,7 @@ class TempUnlockActivity : ComponentActivity() {
                         Text("临时解锁", style = MaterialTheme.typography.headlineSmall)
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            "解锁「$label」$duration 分钟，到期自动恢复拦截。",
+                            "解锁全部 $lockedCount 个界面 $duration 分钟，到期自动落锁。",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -105,7 +100,7 @@ class TempUnlockActivity : ComponentActivity() {
                                 }
                                 Spacer(Modifier.weight(1f))
                                 Actions(ok, onDismiss = { finish() }) {
-                                    confirmUnlock(pkg, duration)
+                                    confirmUnlock(duration)
                                 }
                             }
                             VerifyGate.METHOD_PASSWORD -> {
@@ -124,7 +119,7 @@ class TempUnlockActivity : ComponentActivity() {
                                 }
                                 Spacer(Modifier.weight(1f))
                                 Actions(ok, onDismiss = { finish() }) {
-                                    confirmUnlock(pkg, duration)
+                                    confirmUnlock(duration)
                                 }
                             }
                             VerifyGate.METHOD_DELAY -> {
@@ -149,13 +144,13 @@ class TempUnlockActivity : ComponentActivity() {
                                 }
                                 Spacer(Modifier.weight(1f))
                                 Actions(remaining <= 0, onDismiss = { finish() }) {
-                                    confirmUnlock(pkg, duration)
+                                    confirmUnlock(duration)
                                 }
                             }
                             else -> {
                                 Spacer(Modifier.weight(1f))
                                 Actions(true, onDismiss = { finish() }) {
-                                    confirmUnlock(pkg, duration)
+                                    confirmUnlock(duration)
                                 }
                             }
                         }
@@ -165,15 +160,16 @@ class TempUnlockActivity : ComponentActivity() {
         }
     }
 
-    private fun confirmUnlock(pkg: String, duration: Int) {
-        UnlockExemptions.add(applicationContext, pkg, System.currentTimeMillis() + duration * 60_000L)
-        LockStrength.recordTempUnlock(applicationContext, pkg)
+    private fun confirmUnlock(duration: Int) {
+        UnlockExemptions.addGlobal(applicationContext, System.currentTimeMillis() + duration * 60_000L)
         AmsController.writeRules()
-        // 自动打开该 App
+        // 打开桌面（用户自行选择要用的 App）
         runCatching {
-            applicationContext.packageManager.getLaunchIntentForPackage(pkg)?.let {
-                startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            }
+            startActivity(
+                Intent(Intent.ACTION_MAIN)
+                    .addCategory(Intent.CATEGORY_HOME)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
         }
         finish()
     }

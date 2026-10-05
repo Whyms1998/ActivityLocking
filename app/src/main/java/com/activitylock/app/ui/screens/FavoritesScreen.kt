@@ -925,58 +925,6 @@ private fun GridDetailDialog(
                     }
                     TextButton(onClick = onClose) { Text("关闭") }
                 }
-                Spacer(Modifier.height(8.dp))
-                val exemptUntil = UnlockExemptions.active(ctx)[pkg]
-                val exemptActive = exemptUntil != null && exemptUntil > System.currentTimeMillis()
-                if (exemptActive) {
-                    val untilStr = remember(exemptUntil) {
-                        java.text.SimpleDateFormat("HH:mm").format(java.util.Date(exemptUntil))
-                    }
-                    Text(
-                        "已临时解锁至 $untilStr",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.tertiary
-                    )
-                    Spacer(Modifier.height(8.dp))
-                } else {
-                    val duration = com.activitylock.app.core.LockStrength.tempUnlockMin(ctx)
-                    val dailyMax = com.activitylock.app.core.LockStrength.tempUnlockDailyMax(ctx)
-                    val used = com.activitylock.app.core.LockStrength.tempUnlockUsedToday(ctx, pkg)
-                    val allowed = com.activitylock.app.core.LockStrength.tempUnlockAllowed(ctx, pkg)
-                    var pendingTempUnlock by remember { mutableStateOf(false) }
-                    if (pendingTempUnlock) {
-                        val memberReq = VerifyGate.bulkRequirement(
-                            ctx,
-                            AppStore.rules.filter { it.packageName == pkg }
-                        )
-                        val requirement = if (memberReq.isNone) {
-                            VerifyGate.Requirement(VerifyGate.METHOD_QUIZ, 0, emptyList())
-                        } else memberReq
-                        UnlockVerifyDialog(
-                            requirement = requirement,
-                            title = "临时解锁验证",
-                            hint = "临时解锁 " + duration + " 分钟后自动恢复拦截",
-                            onConfirmed = {
-                                pendingTempUnlock = false
-                                UnlockExemptions.add(ctx, pkg, System.currentTimeMillis() + duration * 60_000L)
-                                com.activitylock.app.core.LockStrength.recordTempUnlock(ctx, pkg)
-                                AmsController.writeRules()
-                                AppStore.toast("已临时解锁至 " +
-                                    java.text.SimpleDateFormat("HH:mm").format(java.util.Date(System.currentTimeMillis() + duration * 60_000L)))
-                            },
-                            onDismiss = { pendingTempUnlock = false }
-                        )
-                    }
-                    TextButton(onClick = { pendingTempUnlock = true }, enabled = allowed) {
-                        Text(if (dailyMax == 0) "临时解锁（已在强度设置中禁用）" else "临时解锁 " + duration + " 分钟")
-                    }
-                    if (!allowed && dailyMax > 0) {
-                        Text(
-                            "今日已用 " + used + "/" + dailyMax + " 次，明天 0 点重置",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                     Spacer(Modifier.height(8.dp))
                 }
                 Column(
@@ -1034,4 +982,3 @@ private fun GridDetailDialog(
             }
         }
     }
-}
