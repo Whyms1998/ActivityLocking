@@ -32,6 +32,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.activitylock.app.core.AppStore
 import com.activitylock.app.core.LockEngine
+import com.activitylock.app.core.VerifyGate
 import com.activitylock.app.core.SchemePresets
 import com.activitylock.app.ui.components.AppIcon
 import kotlinx.coroutines.launch
@@ -51,6 +52,7 @@ fun ActivityToggleRow(
     showAppIcon: Boolean = false,
 ) {
     val key = "$packageName/$cls"
+    val rule = AppStore.rules.firstOrNull { it.packageName == packageName && it.activityName == cls }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var busy by remember(key) { mutableStateOf(false) }
@@ -62,6 +64,18 @@ fun ActivityToggleRow(
         )
     }
     var confirmLock by remember { mutableStateOf(false) }
+    var vMode by remember(confirmLock) { mutableStateOf(rule?.verifyMode) }
+    var vDelay by remember(confirmLock) {
+        mutableStateOf(((rule?.verifyDelaySec ?: VerifyGate.delaySeconds(context))).toString())
+    }
+    var vPwd by remember(confirmLock) { mutableStateOf(rule?.verifyPassword ?: "") }
+    val globalReq = VerifyGate.globalRequirement(context)
+    val globalDesc = when (globalReq.mode) {
+        VerifyGate.MODE_NONE -> "已关闭"
+        VerifyGate.METHOD_DELAY -> "等待" + globalReq.delaySec + "秒"
+        VerifyGate.METHOD_QUIZ -> "答题"
+        else -> "密码"
+    }
 
     fun doApply(wantLock: Boolean, redirectUri: String? = null) {
         busy = true
@@ -296,4 +310,12 @@ private fun LockLauncherDialog(
             TextButton(onClick = onDismiss) { Text("取消") }
         }
     )
+}
+
+@Composable
+private fun VerifyModeRow(selected: Boolean, title: String, onClick: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        androidx.compose.material3.RadioButton(selected = selected, onClick = onClick)
+        Text(title, style = MaterialTheme.typography.bodyMedium)
+    }
 }
