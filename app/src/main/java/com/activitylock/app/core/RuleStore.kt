@@ -95,7 +95,7 @@ class RuleStore(filesDir: File) {
         pkg: String, cls: String, mode: String?, delaySec: Int?, password: String?, quizCount: Int? = null
     ) {
         val validMode = when (mode) {
-            VerifyGate.MODE_NONE, VerifyGate.METHOD_DELAY, VerifyGate.METHOD_PASSWORD, VerifyGate.METHOD_QUIZ -> mode
+            VerifyGate.MODE_NONE, VerifyGate.METHOD_DELAY, VerifyGate.METHOD_PASSWORD, VerifyGate.METHOD_QUIZ, VerifyGate.METHOD_RANDOM -> mode
             else -> null
         }
         _rules.value = _rules.value.map {

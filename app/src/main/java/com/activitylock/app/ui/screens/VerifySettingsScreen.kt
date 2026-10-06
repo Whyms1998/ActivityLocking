@@ -52,6 +52,7 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
     var password by remember { mutableStateOf(VerifyGate.password(ctx)) }
     var delaySec by remember { mutableStateOf(VerifyGate.delaySeconds(ctx)) }
     var quizCount by remember { mutableStateOf(VerifyGate.quizCount(ctx)) }
+    var randomDigits by remember { mutableStateOf(VerifyGate.randomDigits(ctx)) }
 
     // 削弱性修改：逐次验证，无会话通行证
     var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -63,6 +64,7 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
 
     fun persist() {
         VerifyGate.save(ctx, enabled, method, password, delaySec, quizCount)
+        VerifyGate.setRandomDigits(ctx, randomDigits)
     }
 
     Scaffold(
@@ -195,6 +197,37 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                                         }
                                     },
                                     suffix = { Text("题") },
+                                    singleLine = true,
+                                    textStyle = MaterialTheme.typography.bodyMedium
+                                        .copy(fontFeatureSettings = "tnum", textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+                                    modifier = Modifier.width(80.dp)
+                                )
+                            }
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = method == VerifyGate.METHOD_RANDOM,
+                                onClick = {
+                                    requireVerify { method = VerifyGate.METHOD_RANDOM; persist() }
+                                }
+                            )
+                            Text("照抄随机密码")
+                        }
+                        if (method == VerifyGate.METHOD_RANDOM) {
+                            Row(
+                                Modifier.padding(start = 40.dp, top = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("位数", style = MaterialTheme.typography.bodyMedium)
+                                Spacer(Modifier.width(8.dp))
+                                OutlinedTextField(
+                                    value = randomDigits.toString(),
+                                    onValueChange = { raw ->
+                                        raw.filter { c -> c.isDigit() }.take(2).toIntOrNull()?.let {
+                                            randomDigits = it.coerceIn(4, 12)
+                                        }
+                                    },
+                                    suffix = { Text("位") },
                                     singleLine = true,
                                     textStyle = MaterialTheme.typography.bodyMedium
                                         .copy(fontFeatureSettings = "tnum", textAlign = androidx.compose.ui.text.style.TextAlign.Center),

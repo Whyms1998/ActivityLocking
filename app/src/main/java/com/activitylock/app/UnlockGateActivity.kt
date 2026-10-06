@@ -27,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.activitylock.app.core.AmsController
 import com.activitylock.app.core.AppStore
@@ -93,6 +94,30 @@ private fun GateCard(
             Text("全部解锁验证", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(12.dp))
             when (requirement.mode) {
+                VerifyGate.METHOD_RANDOM -> {
+                    var target by remember { mutableStateOf(VerifyGate.genRandomCode(requirement.randomDigits)) }
+                    var input by remember { mutableStateOf("") }
+                    val ok = input == target
+                    Text("照抄随机密码后全部解锁：", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        target,
+                        style = MaterialTheme.typography.displaySmall
+                            .copy(fontFeatureSettings = "tnum", fontWeight = FontWeight.Bold)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = input,
+                        onValueChange = { input = it },
+                        placeholder = { Text("照抄上方密码") },
+                        singleLine = true
+                    )
+                    if (input.isNotBlank() && !ok) {
+                        Spacer(Modifier.height(4.dp))
+                        Text("不一致，请照抄", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+                    }
+                    passed = ok
+                }
                 VerifyGate.METHOD_QUIZ -> {
                     var question by remember { mutableStateOf(VerifyGate.genQuiz()) }
                     var input by remember { mutableStateOf("") }

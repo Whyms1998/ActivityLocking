@@ -51,16 +51,8 @@ import com.activitylock.app.core.LockEngine
 import com.activitylock.app.core.SchemePresets
 import com.activitylock.app.core.VerifyGate
 import com.activitylock.app.ui.components.AppIcon
+import com.activitylock.app.ui.components.UnlockConditionEditor
 import kotlinx.coroutines.launch
-
-/** 解锁条件选择行（锁定弹窗与编辑弹窗共用）。 */
-@Composable
-private fun VerifyModeRow(selected: Boolean, title: String, onClick: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        androidx.compose.material3.RadioButton(selected = selected, onClick = onClick)
-        Text(title, style = MaterialTheme.typography.bodyMedium)
-    }
-}
 
 /** 锁定确认：跳转目标 + 解锁条件一起设置。 */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -199,9 +191,12 @@ fun ActivityToggleRow(
             vDelayInit = vDelay.trim().toIntOrNull(),
             vPwdInit = vPwd,
             vQuizCountInit = vQuizCount.trim().toIntOrNull(),
-            onConfirm = { redirectUri, vm, vd, vp, vqc ->
+            onConfirm = { redirectUri, vm, vd, vp, vqc, rd ->
                 confirmLock = false
                 doApply(true, redirectUri, vm, vd, vp, vqc)
+                if (vm == VerifyGate.METHOD_RANDOM && rd > 0) {
+                    VerifyGate.setRandomDigits(context, rd)
+                }
             },
             onTest = { uri ->
                 runCatching {
@@ -258,7 +253,7 @@ private fun LockLauncherDialog(
     vDelayInit: Int?,
     vPwdInit: String?,
     vQuizCountInit: Int?,
-    onConfirm: (String?, String?, Int?, String?, Int?) -> Unit,
+    onConfirm: (String?, String?, Int?, String?, Int?, Int) -> Unit,
     onTest: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -270,16 +265,18 @@ private fun LockLauncherDialog(
     val context = LocalContext.current
     // 校验跳转目标：未导出的界面 shell 拉不起来，必须用深链
     val warning = remember(uri, packageName) { validateRedirectTarget(context, packageName, uri.trim()) }
-
-    var vMode by remember { mutableStateOf(vModeInit) }
+    // 历史数据里的「无需验证」按跟随全局处理（该选项已移除）
+    var vMode by remember { mutableStateOf(vModeInit?.takeIf { it != VerifyGate.MODE_NONE }) }
     var vDelay by remember { mutableStateOf((vDelayInit ?: VerifyGate.delaySeconds(context)).toString()) }
     var vPwd by remember { mutableStateOf(vPwdInit ?: "") }
     var vQuizCount by remember { mutableStateOf((vQuizCountInit ?: VerifyGate.quizCount(context)).toString()) }
+    var vRandomDigits by remember { mutableStateOf(VerifyGate.randomDigits(context).toString()) }
     val globalReq = VerifyGate.globalRequirement(context)
     val globalDesc = when (globalReq.mode) {
         VerifyGate.MODE_NONE -> "已关闭"
         VerifyGate.METHOD_DELAY -> "等待" + globalReq.delaySec + "秒"
         VerifyGate.METHOD_QUIZ -> "答题" + globalReq.quizCount + "题"
+        VerifyGate.METHOD_RANDOM -> "随机密码" + globalReq.randomDigits + "位"
         else -> "密码"
     }
 
@@ -349,62 +346,31 @@ private fun LockLauncherDialog(
                     Text("仅拦截（打开无反应）", style = MaterialTheme.typography.bodyMedium)
                 }
                 Spacer(Modifier.height(12.dp))
-                Text("解锁条件", style = MaterialTheme.typography.titleSmall)
-                VerifyModeRow(selected = vMode == null, title = "跟随全局（当前：$globalDesc）", onClick = { vMode = null })
-                VerifyModeRow(selected = vMode == VerifyGate.MODE_NONE, title = "无需验证", onClick = { vMode = VerifyGate.MODE_NONE })
-                VerifyModeRow(selected = vMode == VerifyGate.METHOD_DELAY, title = "等待倒计时", onClick = { vMode = VerifyGate.METHOD_DELAY })
-                if (vMode == VerifyGate.METHOD_DELAY) {
-                    Row(
-                        Modifier.padding(start = 40.dp, top = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("等待", style = MaterialTheme.typography.bodyMedium)
-                        Spacer(Modifier.width(8.dp))
-                        OutlinedTextField(
-                            value = vDelay,
-                            onValueChange = { raw -> vDelay = raw.filter { c -> c.isDigit() }.take(4) },
-                            suffix = { Text("秒") },
-                            singleLine = true,
-                            textStyle = MaterialTheme.typography.bodyMedium
-                                .copy(fontFeatureSettings = "tnum", textAlign = androidx.compose.ui.text.style.TextAlign.Center),
-                            modifier = Modifier.width(96.dp)
-                        )
-                    }
-                }
-                VerifyModeRow(selected = vMode == VerifyGate.METHOD_QUIZ, title = "答对若干道口算题", onClick = { vMode = VerifyGate.METHOD_QUIZ })
-                if (vMode == VerifyGate.METHOD_QUIZ) {
-                    Row(
-                        Modifier.padding(start = 40.dp, top = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("连对", style = MaterialTheme.typography.bodyMedium)
-                        Spacer(Modifier.width(8.dp))
-                        OutlinedTextField(
-                            value = vQuizCount,
-                            onValueChange = { raw -> vQuizCount = raw.filter { c -> c.isDigit() }.take(2) },
-                            suffix = { Text("题") },
-                            singleLine = true,
-                            textStyle = MaterialTheme.typography.bodyMedium
-                                .copy(fontFeatureSettings = "tnum", textAlign = androidx.compose.ui.text.style.TextAlign.Center),
-                            modifier = Modifier.width(80.dp)
-                        )
-                    }
-                }
-                VerifyModeRow(selected = vMode == VerifyGate.METHOD_PASSWORD, title = "输入密码", onClick = { vMode = VerifyGate.METHOD_PASSWORD })
-                if (vMode == VerifyGate.METHOD_PASSWORD) {
-                    OutlinedTextField(
-                        value = vPwd,
-                        onValueChange = { vPwd = it },
-                        label = { Text(if (vPwd.isBlank()) "留空则使用全局密码" else "该界面专用密码") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth().padding(start = 40.dp)
-                    )
-                }
+                UnlockConditionEditor(
+                    mode = vMode,
+                    delaySec = vDelay.trim().toIntOrNull() ?: VerifyGate.delaySeconds(context),
+                    password = vPwd,
+                    quizCount = vQuizCount.trim().toIntOrNull() ?: VerifyGate.quizCount(context),
+                    randomDigits = vRandomDigits.trim().toIntOrNull() ?: VerifyGate.randomDigits(context),
+                    globalDesc = globalDesc,
+                    onModeChange = { vMode = it },
+                    onDelayChange = { vDelay = it.toString() },
+                    onPasswordChange = { vPwd = it },
+                    onQuizCountChange = { vQuizCount = it.toString() },
+                    onRandomDigitsChange = { vRandomDigits = it.toString() },
+                )
             }
         },
         confirmButton = {
             TextButton(onClick = {
-                onConfirm(redirectUri, vMode, vDelay.trim().toIntOrNull(), vPwd, vQuizCount.trim().toIntOrNull())
+                onConfirm(
+                    redirectUri,
+                    vMode,
+                    vDelay.trim().toIntOrNull(),
+                    vPwd,
+                    vQuizCount.trim().toIntOrNull(),
+                    vRandomDigits.trim().toIntOrNull() ?: 6
+                )
             }) { Text("锁定") }
         },
         dismissButton = {

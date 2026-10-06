@@ -49,6 +49,7 @@ class TempUnlockActivity : ComponentActivity() {
         AppStore.ensureInit(applicationContext)
         val duration = LockStrength.tempUnlockMin(this)
         val lockedRules = AppStore.rules.filter { it.locked }
+        val lockedCount = lockedRules.size
         val memberReq = VerifyGate.bulkRequirement(this, lockedRules)
         val requirement = if (memberReq.isNone) {
             VerifyGate.Requirement(VerifyGate.METHOD_QUIZ, 0, emptyList())
@@ -76,10 +77,53 @@ class TempUnlockActivity : ComponentActivity() {
                         Spacer(Modifier.height(40.dp))
 
                         when (requirement.mode) {
+                            VerifyGate.METHOD_RANDOM -> {
+                                var target by remember { mutableStateOf(VerifyGate.genRandomCode(requirement.randomDigits)) }
+                                var input by remember { mutableStateOf("") }
+                                val ok = input == target
+                                Text(
+                                    "照抄随机密码后临时解锁：",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    target,
+                                    style = MaterialTheme.typography.displaySmall
+                                        .copy(fontFeatureSettings = "tnum", fontWeight = FontWeight.Bold)
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                OutlinedTextField(
+                                    value = input,
+                                    onValueChange = { input = it },
+                                    placeholder = { Text("照抄上方密码") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                if (input.isNotBlank() && !ok) {
+                                    Spacer(Modifier.height(4.dp))
+                                    Text("不一致，请照抄", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+                                }
+                                Spacer(Modifier.weight(1f))
+                                Actions(ok, onDismiss = { finish() }) {
+                                    confirmUnlock(duration)
+                                }
+                            }
                             VerifyGate.METHOD_QUIZ -> {
+                                var solved by remember { mutableIntStateOf(0) }
                                 var question by remember { mutableStateOf(VerifyGate.genQuiz()) }
                                 var input by remember { mutableStateOf("") }
-                                val ok = input.isNotBlank() && input.trim().toIntOrNull() == question.second
+                                val total = requirement.quizCount.coerceAtLeast(1)
+                                val ok = solved >= total
+                                val wrong = input.isNotBlank() &&
+                                    input.trim().toIntOrNull() != question.second
+                                if (total > 1) {
+                                    Text(
+                                        "第 ${solved + 1} / $total 题",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(Modifier.height(8.dp))
+                                }
                                 Text(
                                     question.first,
                                     style = MaterialTheme.typography.displaySmall
@@ -88,13 +132,22 @@ class TempUnlockActivity : ComponentActivity() {
                                 Spacer(Modifier.height(24.dp))
                                 OutlinedTextField(
                                     value = input,
-                                    onValueChange = { input = it.filter { c -> c.isDigit() || c == '-' } },
+                                    onValueChange = { raw ->
+                                        input = raw.filter { c -> c.isDigit() || c == '-' }
+                                        if (input.isNotBlank() && input.trim().toIntOrNull() == question.second) {
+                                            solved++
+                                            if (solved < total) {
+                                                input = ""
+                                                question = VerifyGate.genQuiz()
+                                            }
+                                        }
+                                    },
                                     placeholder = { Text("答案") },
                                     singleLine = true,
                                     textStyle = MaterialTheme.typography.headlineSmall,
                                     modifier = Modifier.fillMaxWidth()
                                 )
-                                if (input.isNotBlank() && !ok) {
+                                if (wrong) {
                                     Spacer(Modifier.height(8.dp))
                                     Text("答案不对，再算算", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
                                 }

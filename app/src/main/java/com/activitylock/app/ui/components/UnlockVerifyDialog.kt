@@ -140,6 +140,46 @@ fun UnlockVerifyDialog(
                             Button(enabled = ok, onClick = { onConfirmed() }) { Text("确认解锁") }
                         }
                     }
+                    VerifyGate.METHOD_RANDOM -> {
+                        var target by remember { mutableStateOf(VerifyGate.genRandomCode(req.randomDigits)) }
+                        var input by remember { mutableStateOf("") }
+                        val ok = input == target
+                        Text(
+                            "请照抄下面这串随机密码（无法记忆，打断下意识解锁）",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Text(
+                            target,
+                            style = MaterialTheme.typography.displaySmall
+                                .copy(fontFeatureSettings = "tnum", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold),
+                            letterSpacing = 4.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        OutlinedTextField(
+                            value = input,
+                            onValueChange = { input = it },
+                            placeholder = { Text("照抄上方密码", textAlign = TextAlign.Center) },
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.headlineSmall
+                                .copy(fontFeatureSettings = "tnum", textAlign = TextAlign.Center),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        if (input.isNotBlank() && !ok) {
+                            Spacer(Modifier.height(8.dp))
+                            Text("不一致，请照抄", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+                        }
+                        Spacer(Modifier.weight(1f))
+                        Row(Modifier.fillMaxWidth()) {
+                            TextButton(onClick = onDismiss) { Text("取消") }
+                            Spacer(Modifier.weight(1f))
+                            Button(enabled = ok, onClick = { onConfirmed() }) { Text("确认解锁") }
+                        }
+                    }
                     VerifyGate.METHOD_PASSWORD -> {
                         var input by remember { mutableStateOf("") }
                         val ok = req.passwordOk(input)

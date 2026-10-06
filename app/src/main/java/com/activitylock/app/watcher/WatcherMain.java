@@ -311,6 +311,11 @@ public class WatcherMain {
                     }
                     String comp = o.optString("c", "");
                     if (!comp.isEmpty()) next.put(comp, o.optString("r", ""));
+                    // 全局临时豁免：{"g":1,"u":到期毫秒}，过期即视为无豁免
+                    if (o.optInt("g", 0) == 1) {
+                        long u = o.optLong("u", 0);
+                        GLOBAL_EXEMPT_UNTIL = u > System.currentTimeMillis() ? u : 0;
+                    }
                 } else if (el instanceof String) {
                     next.put((String) el, ""); // 旧版纯字符串格式：仅拦截
                 }
@@ -319,9 +324,7 @@ public class WatcherMain {
             BLOCKED.putAll(next);
             PKG_BLOCKED.clear();
             PKG_BLOCKED.putAll(nextPkgs);
-            EXEMPT.clear();
-            EXEMPT.putAll(nextExempt);
-            log("reload: c=" + next.size() + " p=" + nextPkgs.size() + " e=" + nextExempt.size());
+            log("reload: c=" + next.size() + " p=" + nextPkgs.size() + " g=" + (GLOBAL_EXEMPT_UNTIL > 0 ? 1 : 0));
             // 规则变化（可能换了跳转目标）→ 解除坏目标抑制，给新目标机会
             SUPPRESS_UNTIL.clear();
         } catch (Throwable ignored) {

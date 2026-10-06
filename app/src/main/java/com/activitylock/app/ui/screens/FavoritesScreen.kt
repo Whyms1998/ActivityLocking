@@ -376,17 +376,16 @@ fun FavoritesScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        val exemptMin = com.activitylock.app.core.UnlockExemptions.active(ctx)[pkg]
-                            ?.let { ((it - System.currentTimeMillis()) / 60000L).toInt() }
+                        val exemptMin = ((com.activitylock.app.core.UnlockExemptions.until(ctx) - System.currentTimeMillis()) / 60000L).toInt()
                         Text(
                             when {
-                                exemptMin != null && exemptMin > 0 -> "🔓 临时解锁 " + exemptMin + "分"
+                                exemptMin > 0 -> "🔓 临时解锁 " + exemptMin + "分"
                                 locked == total -> "🔒 " + total
                                 else -> "" + locked + "/" + total
                             },
                             style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
                             color = when {
-                                exemptMin != null && exemptMin > 0 -> MaterialTheme.colorScheme.tertiary
+                                exemptMin > 0 -> MaterialTheme.colorScheme.tertiary
                                 locked == total -> MaterialTheme.colorScheme.primary
                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
                             }
@@ -649,6 +648,9 @@ fun FavoritesScreen(
         var vQuizCount by remember(rule) {
             mutableStateOf((rule.quizCount ?: VerifyGate.quizCount(ctx)).toString())
         }
+        var vRandomDigits by remember(rule) {
+            mutableStateOf(VerifyGate.randomDigits(ctx).toString())
+        }
         var quota by remember(rule) { mutableStateOf(rule.quotaMin?.toString() ?: "") }
         var pendingWeakSave by remember(rule) { mutableStateOf(false) }
         val globalReq = VerifyGate.globalRequirement(ctx)
@@ -679,6 +681,9 @@ fun FavoritesScreen(
                 rule.packageName, rule.activityName,
                 vMode, vDelay.trim().toIntOrNull(), vPwd, vQuizCount.trim().toIntOrNull()
             )
+            if (vMode == VerifyGate.METHOD_RANDOM) {
+                VerifyGate.setRandomDigits(ctx, vRandomDigits.toIntOrNull() ?: 6)
+            }
             AppStore.updateQuota(rule.packageName, rule.activityName, quota.trim().toIntOrNull())
             // 跳转目标/超额状态影响 Watcher 规则，立即同步；限额需要守护服务
             AmsController.writeRules()
@@ -716,80 +721,19 @@ fun FavoritesScreen(
                         singleLine = true
                     )
                     Spacer(Modifier.height(12.dp))
-                    Text("解锁条件", style = MaterialTheme.typography.titleSmall)
-                    Spacer(Modifier.height(4.dp))
-                    VerifyModeRow(
-                        selected = vMode == null,
-                        title = "跟随全局（当前：$globalDesc）",
-                        onClick = { vMode = null }
+                    com.activitylock.app.ui.components.UnlockConditionEditor(
+                        mode = vMode,
+                        delaySec = vDelay.toIntOrNull() ?: VerifyGate.delaySeconds(ctx),
+                        password = vPwd,
+                        quizCount = vQuizCount.toIntOrNull() ?: VerifyGate.quizCount(ctx),
+                        randomDigits = vRandomDigits.toIntOrNull() ?: 6,
+                        globalDesc = "",
+                        onModeChange = { vMode = it },
+                        onDelayChange = { vDelay = it.toString() },
+                        onPasswordChange = { vPwd = it },
+                        onQuizCountChange = { vQuizCount = it.toString() },
+                        onRandomDigitsChange = { vRandomDigits = it.toString() },
                     )
-                    VerifyModeRow(
-                        selected = vMode == VerifyGate.MODE_NONE,
-                        title = "无需验证",
-                        onClick = { vMode = VerifyGate.MODE_NONE }
-                    )
-                    VerifyModeRow(
-                        selected = vMode == VerifyGate.METHOD_DELAY,
-                        title = "等待倒计时",
-                        onClick = { vMode = VerifyGate.METHOD_DELAY }
-                    )
-                    if (vMode == VerifyGate.METHOD_DELAY) {
-                        Row(
-                            Modifier.padding(start = 40.dp, top = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("等待", style = MaterialTheme.typography.bodyMedium)
-                            Spacer(Modifier.width(8.dp))
-                            OutlinedTextField(
-                                value = vDelay,
-                                onValueChange = { raw -> vDelay = raw.filter { c -> c.isDigit() }.take(4) },
-                                suffix = { Text("秒") },
-                                singleLine = true,
-                                textStyle = MaterialTheme.typography.bodyMedium
-                                    .copy(fontFeatureSettings = "tnum", textAlign = androidx.compose.ui.text.style.TextAlign.Center),
-                                modifier = Modifier.width(96.dp)
-                            )
-                        }
-                    }
-                    if (vMode == VerifyGate.METHOD_QUIZ) {
-                        Row(
-                            Modifier.padding(start = 40.dp, top = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("连对", style = MaterialTheme.typography.bodyMedium)
-                            Spacer(Modifier.width(8.dp))
-                            OutlinedTextField(
-                                value = vQuizCount,
-                                onValueChange = { raw -> vQuizCount = raw.filter { c -> c.isDigit() }.take(2) },
-                                suffix = { Text("题") },
-                                singleLine = true,
-                                textStyle = MaterialTheme.typography.bodyMedium
-                                    .copy(fontFeatureSettings = "tnum", textAlign = androidx.compose.ui.text.style.TextAlign.Center),
-                                modifier = Modifier.width(80.dp)
-                            )
-                        }
-                    }
-                    VerifyModeRow(
-                        selected = vMode == VerifyGate.METHOD_QUIZ,
-                        title = "答对一道口算题",
-                        onClick = { vMode = VerifyGate.METHOD_QUIZ }
-                    )
-                    VerifyModeRow(
-                        selected = vMode == VerifyGate.METHOD_PASSWORD,
-                        title = "输入密码",
-                        onClick = { vMode = VerifyGate.METHOD_PASSWORD }
-                    )
-                    if (vMode == VerifyGate.METHOD_PASSWORD) {
-                        OutlinedTextField(
-                            value = vPwd,
-                            onValueChange = { vPwd = it },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(start = 40.dp, top = 4.dp, end = 16.dp),
-                            label = { Text(if (vPwd.isBlank()) "留空则使用全局密码" else "该界面专用密码") },
-                            singleLine = true
-                        )
-                    }
                     Spacer(Modifier.height(8.dp))
                     TextButton(onClick = {
                         AppStore.upsertPreset(
