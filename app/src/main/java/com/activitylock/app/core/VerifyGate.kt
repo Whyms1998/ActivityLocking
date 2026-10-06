@@ -17,9 +17,10 @@ object VerifyGate {
 
     /** 一次解锁需要满足的条件。passwords 为可接受的密码集合（全部解锁时可能涉及多个界面各自的密码）。 */
     data class Requirement(
-        val mode: String,          // "none" | "delay" | "password"
+        val mode: String,          // "none" | "delay" | "password" | "quiz"
         val delaySec: Int,
         val passwords: List<String>,
+        val quizCount: Int = 1,    // 答题需连对的题数
     ) {
         val isNone: Boolean get() = mode == MODE_NONE
         fun passwordOk(input: String): Boolean =
@@ -36,13 +37,21 @@ object VerifyGate {
 
     fun password(ctx: Context): String = prefs(ctx).getString("password", "") ?: ""
 
-    fun save(ctx: Context, enabled: Boolean, method: String, password: String, delaySec: Int) {
+    fun save(ctx: Context, enabled: Boolean, method: String, password: String, delaySec: Int, quizCount: Int = 1) {
         prefs(ctx).edit()
             .putBoolean("enabled", enabled)
             .putString("method", method)
             .putString("password", password)
             .putInt("delay_sec", delaySec)
+            .putInt("quiz_count", quizCount.coerceIn(1, 10))
             .apply()
+    }
+
+    /** 全局答题数量（1-10 题）。 */
+    fun quizCount(ctx: Context): Int = prefs(ctx).getInt("quiz_count", 1).coerceIn(1, 10)
+
+    fun setQuizCount(ctx: Context, count: Int) {
+        prefs(ctx).edit().putInt("quiz_count", count.coerceIn(1, 10)).apply()
     }
 
     /** 全局配置解析为条件（全局开关关闭时为 none）。 */
@@ -53,9 +62,9 @@ object VerifyGate {
                 method(ctx) == METHOD_PASSWORD && pwd.isBlank() ->
                     Requirement(METHOD_DELAY, delaySeconds(ctx).coerceAtLeast(1), emptyList())
                 method(ctx) == METHOD_QUIZ ->
-                    Requirement(METHOD_QUIZ, 0, emptyList())
+                    Requirement(METHOD_QUIZ, 0, emptyList(), quizCount(ctx))
                 else ->
-                    Requirement(method(ctx), delaySeconds(ctx).coerceAtLeast(1), listOf(pwd))
+                    Requirement(method(ctx), delaySeconds(ctx).coerceIn(5, 3600), listOf(pwd))
             }
         } else Requirement(MODE_NONE, 0, emptyList())
 
@@ -74,8 +83,8 @@ object VerifyGate {
             else -> return globalRequirement(ctx)
         }
         if (mode == MODE_NONE) return Requirement(MODE_NONE, 0, emptyList())
-        if (mode == METHOD_QUIZ) return Requirement(METHOD_QUIZ, 0, emptyList())
-        val delaySec = (rule?.verifyDelaySec ?: delaySeconds(ctx)).coerceAtLeast(1)
+        if (mode == METHOD_QUIZ) return Requirement(METHOD_QUIZ, 0, emptyList(), rule?.quizCount ?: quizCount(ctx))
+        val delaySec = (rule?.verifyDelaySec ?: delaySeconds(ctx)).coerceIn(5, 3600)
         val pwd = rule?.verifyPassword?.takeIf { it.isNotBlank() } ?: password(ctx)
         return if (mode == METHOD_PASSWORD && pwd.isBlank()) {
             // 规则选了密码但没填密码、全局也没密码 → 退化为等待
@@ -106,7 +115,8 @@ object VerifyGate {
             }
         }
         if (reqs.any { it.mode == METHOD_QUIZ }) {
-            return Requirement(METHOD_QUIZ, 0, emptyList())
+            return Requirement(METHOD_QUIZ, 0, emptyList(),
+                reqs.filter { it.mode == METHOD_QUIZ }.maxOf { it.quizCount })
         }
         val maxDelay = reqs.filter { it.mode == METHOD_DELAY }.maxOfOrNull { it.delaySec } ?: 0
         return if (maxDelay > 0) Requirement(METHOD_DELAY, maxDelay, emptyList())

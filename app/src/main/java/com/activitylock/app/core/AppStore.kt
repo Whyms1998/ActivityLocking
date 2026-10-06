@@ -113,9 +113,11 @@ object AppStore {
         rules = ruleStore.rules
     }
 
-    fun updateVerify(pkg: String, cls: String, mode: String?, delaySec: Int?, password: String?) {
+    fun updateVerify(
+        pkg: String, cls: String, mode: String?, delaySec: Int?, password: String?, quizCount: Int? = null
+    ) {
         if (!::ruleStore.isInitialized) return
-        ruleStore.updateVerify(pkg, cls, mode, delaySec, password)
+        ruleStore.updateVerify(pkg, cls, mode, delaySec, password, quizCount)
         rules = ruleStore.rules
     }
 

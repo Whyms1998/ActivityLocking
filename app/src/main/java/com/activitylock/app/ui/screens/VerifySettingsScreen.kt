@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -50,6 +51,7 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
     var method by remember { mutableStateOf(VerifyGate.method(ctx)) }
     var password by remember { mutableStateOf(VerifyGate.password(ctx)) }
     var delaySec by remember { mutableStateOf(VerifyGate.delaySeconds(ctx)) }
+    var quizCount by remember { mutableStateOf(VerifyGate.quizCount(ctx)) }
 
     // 削弱性修改：逐次验证，无会话通行证
     var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -60,7 +62,7 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
     }
 
     fun persist() {
-        VerifyGate.save(ctx, enabled, method, password, delaySec)
+        VerifyGate.save(ctx, enabled, method, password, delaySec, quizCount)
     }
 
     Scaffold(
@@ -147,21 +149,24 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                         }
                         if (method == VerifyGate.METHOD_DELAY) {
                             Row(
-                                Modifier.padding(start = 40.dp),
+                                Modifier.padding(start = 40.dp, top = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                TextButton(
-                                    onClick = { requireVerify { delaySec = (delaySec - 5).coerceAtLeast(5); persist() } }
-                                ) { Text("−") }
-                                Text(
-                                    "$delaySec 秒",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    modifier = Modifier.padding(horizontal = 12.dp)
+                                Text("等待", style = MaterialTheme.typography.bodyMedium)
+                                Spacer(Modifier.width(8.dp))
+                                OutlinedTextField(
+                                    value = delaySec.toString(),
+                                    onValueChange = { raw ->
+                                        raw.filter { c -> c.isDigit() }.take(4).toIntOrNull()?.let {
+                                            delaySec = it.coerceIn(5, 3600)
+                                        }
+                                    },
+                                    suffix = { Text("秒") },
+                                    singleLine = true,
+                                    textStyle = MaterialTheme.typography.bodyMedium
+                                        .copy(fontFeatureSettings = "tnum", textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+                                    modifier = Modifier.width(96.dp)
                                 )
-                                // 延长等待是加强，不需要验证
-                                TextButton(
-                                    onClick = { delaySec = (delaySec + 5).coerceAtMost(600); persist() }
-                                ) { Text("＋") }
                             }
                         }
 
@@ -173,7 +178,29 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                                     requireVerify { method = VerifyGate.METHOD_QUIZ; persist() }
                                 }
                             )
-                            Text("答对一道口算题")
+                            Text("答对若干道口算题")
+                        }
+                        if (method == VerifyGate.METHOD_QUIZ) {
+                            Row(
+                                Modifier.padding(start = 40.dp, top = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("连对", style = MaterialTheme.typography.bodyMedium)
+                                Spacer(Modifier.width(8.dp))
+                                OutlinedTextField(
+                                    value = quizCount.toString(),
+                                    onValueChange = { raw ->
+                                        raw.filter { c -> c.isDigit() }.take(2).toIntOrNull()?.let {
+                                            quizCount = it.coerceIn(1, 10)
+                                        }
+                                    },
+                                    suffix = { Text("题") },
+                                    singleLine = true,
+                                    textStyle = MaterialTheme.typography.bodyMedium
+                                        .copy(fontFeatureSettings = "tnum", textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+                                    modifier = Modifier.width(80.dp)
+                                )
+                            }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             RadioButton(

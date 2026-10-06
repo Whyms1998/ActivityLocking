@@ -660,6 +660,9 @@ fun FavoritesScreen(
             mutableStateOf(((rule.verifyDelaySec ?: VerifyGate.delaySeconds(ctx))).toString())
         }
         var vPwd by remember(rule) { mutableStateOf(rule.verifyPassword ?: "") }
+        var vQuizCount by remember(rule) {
+            mutableStateOf((rule.quizCount ?: VerifyGate.quizCount(ctx)).toString())
+        }
         var quota by remember(rule) { mutableStateOf(rule.quotaMin?.toString() ?: "") }
         var pendingWeakSave by remember(rule) { mutableStateOf(false) }
         val globalReq = VerifyGate.globalRequirement(ctx)
@@ -688,7 +691,7 @@ fun FavoritesScreen(
             AppStore.updateRedirect(rule.packageName, rule.activityName, redirect)
             AppStore.updateVerify(
                 rule.packageName, rule.activityName,
-                vMode, vDelay.trim().toIntOrNull(), vPwd
+                vMode, vDelay.trim().toIntOrNull(), vPwd, vQuizCount.trim().toIntOrNull()
             )
             AppStore.updateQuota(rule.packageName, rule.activityName, quota.trim().toIntOrNull())
             // 跳转目标/超额状态影响 Watcher 规则，立即同步；限额需要守护服务
@@ -746,20 +749,38 @@ fun FavoritesScreen(
                     )
                     if (vMode == VerifyGate.METHOD_DELAY) {
                         Row(
-                            Modifier.padding(start = 40.dp),
+                            Modifier.padding(start = 40.dp, top = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            TextButton(onClick = {
-                                vDelay = (((vDelay.toIntOrNull() ?: 5) - 5).coerceAtLeast(5)).toString()
-                            }) { Text("−") }
-                            Text(
-                                "${vDelay.toIntOrNull() ?: 5} 秒",
-                                style = MaterialTheme.typography.titleMedium,
-                                modifier = Modifier.padding(horizontal = 12.dp)
+                            Text("等待", style = MaterialTheme.typography.bodyMedium)
+                            Spacer(Modifier.width(8.dp))
+                            OutlinedTextField(
+                                value = vDelay,
+                                onValueChange = { raw -> vDelay = raw.filter { c -> c.isDigit() }.take(4) },
+                                suffix = { Text("秒") },
+                                singleLine = true,
+                                textStyle = MaterialTheme.typography.bodyMedium
+                                    .copy(fontFeatureSettings = "tnum", textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+                                modifier = Modifier.width(96.dp)
                             )
-                            TextButton(onClick = {
-                                vDelay = (((vDelay.toIntOrNull() ?: 5) + 5).coerceAtMost(600)).toString()
-                            }) { Text("＋") }
+                        }
+                    }
+                    if (vMode == VerifyGate.METHOD_QUIZ) {
+                        Row(
+                            Modifier.padding(start = 40.dp, top = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("连对", style = MaterialTheme.typography.bodyMedium)
+                            Spacer(Modifier.width(8.dp))
+                            OutlinedTextField(
+                                value = vQuizCount,
+                                onValueChange = { raw -> vQuizCount = raw.filter { c -> c.isDigit() }.take(2) },
+                                suffix = { Text("题") },
+                                singleLine = true,
+                                textStyle = MaterialTheme.typography.bodyMedium
+                                    .copy(fontFeatureSettings = "tnum", textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+                                modifier = Modifier.width(80.dp)
+                            )
                         }
                     }
                     VerifyModeRow(

@@ -85,9 +85,17 @@ fun UnlockVerifyDialog(
 
                 when (req.mode) {
                     VerifyGate.METHOD_QUIZ -> {
+                        var solved by remember { mutableIntStateOf(0) }
                         var question by remember { mutableStateOf(VerifyGate.genQuiz()) }
                         var input by remember { mutableStateOf("") }
-                        val ok = input.isNotBlank() && input.trim().toIntOrNull() == question.second
+                        val total = req.quizCount.coerceAtLeast(1)
+                        val ok = solved >= total
+                        Text(
+                            "第 " + (solved + 1) + " / " + total + " 题",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
                         Text(
                             question.first,
                             style = MaterialTheme.typography.displaySmall
@@ -105,7 +113,15 @@ fun UnlockVerifyDialog(
                                 .copy(fontFeatureSettings = "tnum", textAlign = TextAlign.Center),
                             modifier = Modifier.fillMaxWidth()
                         )
-                        if (input.isNotBlank() && !ok) {
+                        // 答对自动进入下一题；全部答对后可确认
+                        androidx.compose.runtime.LaunchedEffect(input) {
+                            if (input.isNotBlank() && input.trim().toIntOrNull() == question.second) {
+                                solved++
+                                question = VerifyGate.genQuiz()
+                                input = ""
+                            }
+                        }
+                        if (input.isNotBlank() && input.trim().toIntOrNull() != question.second) {
                             Spacer(Modifier.height(8.dp))
                             Text(
                                 "答案不对，再算算",

@@ -14,10 +14,12 @@ data class LockRule(
     val locked: Boolean = true,
     /** 拦截后跳转的深链（如搜索页 xhsdiscover://search），null 表示仅拦截不跳转。 */
     val redirectUri: String? = null,
-    /** 解锁条件：null=跟随全局；"none"=无需验证；"delay"=等待；"password"=密码 */
+    /** 解锁条件：null=跟随全局；"none"=无需验证；"delay"=等待；"password"=密码；"quiz"=答题 */
     val verifyMode: String? = null,
     val verifyDelaySec: Int? = null,
     val verifyPassword: String? = null,
+    /** 答题需连对的题数（quiz 模式），null=跟随全局 */
+    val quizCount: Int? = null,
     /** 每日使用限额（分钟），null=不限额。按 App（包名）生效，同一包取最大值。 */
     val quotaMin: Int? = null,
     val createdAt: Long = System.currentTimeMillis(),
@@ -89,7 +91,9 @@ class RuleStore(filesDir: File) {
     }
 
     /** 设置单条规则的解锁条件。mode=null 表示跟随全局。 */
-    fun updateVerify(pkg: String, cls: String, mode: String?, delaySec: Int?, password: String?) {
+    fun updateVerify(
+        pkg: String, cls: String, mode: String?, delaySec: Int?, password: String?, quizCount: Int? = null
+    ) {
         val validMode = when (mode) {
             VerifyGate.MODE_NONE, VerifyGate.METHOD_DELAY, VerifyGate.METHOD_PASSWORD, VerifyGate.METHOD_QUIZ -> mode
             else -> null
@@ -97,8 +101,9 @@ class RuleStore(filesDir: File) {
         _rules.value = _rules.value.map {
             if (it.packageName == pkg && it.activityName == cls) it.copy(
                 verifyMode = validMode,
-                verifyDelaySec = if (validMode == VerifyGate.METHOD_DELAY) delaySec?.coerceIn(1, 600) else null,
+                verifyDelaySec = if (validMode == VerifyGate.METHOD_DELAY) delaySec?.coerceIn(5, 3600) else null,
                 verifyPassword = if (validMode == VerifyGate.METHOD_PASSWORD) password?.trim()?.takeIf { s -> s.isNotBlank() } else null,
+                quizCount = if (validMode == VerifyGate.METHOD_QUIZ) quizCount?.coerceIn(1, 10) else null,
             ) else it
         }
         save()

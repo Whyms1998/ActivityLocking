@@ -2,19 +2,35 @@ package com.activitylock.app.ui.screens
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -32,16 +48,22 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.activitylock.app.core.AppStore
 import com.activitylock.app.core.LockEngine
-import com.activitylock.app.core.VerifyGate
 import com.activitylock.app.core.SchemePresets
+import com.activitylock.app.core.VerifyGate
 import com.activitylock.app.ui.components.AppIcon
 import kotlinx.coroutines.launch
 
-/**
- * 单个 Activity 行：显示状态开关。锁定成功后自动加入收藏夹。
- * 组件禁用受系统限制时自动降级为拦截模式；
- * 锁定桌面入口时可选择"拦截后跳转搜索页"。
- */
+/** 解锁条件选择行（锁定弹窗与编辑弹窗共用）。 */
+@Composable
+private fun VerifyModeRow(selected: Boolean, title: String, onClick: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        androidx.compose.material3.RadioButton(selected = selected, onClick = onClick)
+        Text(title, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/** 锁定确认：跳转目标 + 解锁条件一起设置。 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ActivityToggleRow(
     packageName: String,
@@ -59,9 +81,7 @@ fun ActivityToggleRow(
     var locked by remember(key) { mutableStateOf(AppStore.isDisabled(packageName, cls)) }
     var mode by remember(key) { mutableStateOf("pm") }
     var redirect by remember(key) {
-        mutableStateOf(
-            AppStore.rules.firstOrNull { it.packageName == packageName && it.activityName == cls }?.redirectUri
-        )
+        mutableStateOf(rule?.redirectUri)
     }
     var confirmLock by remember { mutableStateOf(false) }
     var vMode by remember(confirmLock) { mutableStateOf(rule?.verifyMode) }
@@ -69,6 +89,9 @@ fun ActivityToggleRow(
         mutableStateOf(((rule?.verifyDelaySec ?: VerifyGate.delaySeconds(context))).toString())
     }
     var vPwd by remember(confirmLock) { mutableStateOf(rule?.verifyPassword ?: "") }
+    var vQuizCount by remember(confirmLock) {
+        mutableStateOf((rule?.quizCount ?: VerifyGate.quizCount(context)).toString())
+    }
     val globalReq = VerifyGate.globalRequirement(context)
     val globalDesc = when (globalReq.mode) {
         VerifyGate.MODE_NONE -> "已关闭"
@@ -77,7 +100,7 @@ fun ActivityToggleRow(
         else -> "密码"
     }
 
-    fun doApply(wantLock: Boolean, redirectUri: String? = null) {
+    fun doApply(wantLock: Boolean, redirectUri: String?, vMode: String?, vDelay: Int?, vPwd: String?, vQuizCount: Int?) {
         busy = true
         scope.launch {
             val o = LockEngine.apply(packageName, cls, wantLock, redirectUri)
@@ -100,6 +123,8 @@ fun ActivityToggleRow(
                 if (!locked) mode = "pm"
                 AppStore.toast("操作失败：${o.detail}")
             }
+            // 解锁条件随锁定一并保存（解锁/解锁失败时也保持一致）
+            AppStore.updateVerify(packageName, cls, vMode, vDelay, vPwd, vQuizCount)
             busy = false
         }
     }
@@ -159,7 +184,7 @@ fun ActivityToggleRow(
                     if (wantLock && !locked) {
                         confirmLock = true
                     } else {
-                        doApply(wantLock)
+                        doApply(wantLock, null, null, null, null, null)
                     }
                 }
             )
@@ -170,9 +195,13 @@ fun ActivityToggleRow(
         LockLauncherDialog(
             packageName = packageName,
             isLauncher = isLauncher,
-            onConfirm = { redirectUri ->
+            vModeInit = vMode,
+            vDelayInit = vDelay.trim().toIntOrNull(),
+            vPwdInit = vPwd,
+            vQuizCountInit = vQuizCount.trim().toIntOrNull(),
+            onConfirm = { redirectUri, vm, vd, vp, vqc ->
                 confirmLock = false
-                doApply(true, redirectUri)
+                doApply(true, redirectUri, vm, vd, vp, vqc)
             },
             onTest = { uri ->
                 runCatching {
@@ -220,12 +249,16 @@ private fun validateRedirectTarget(context: android.content.Context, pkg: String
     else "该界面未导出（exported=false），拦截器无法拉起；请改用搜索页深链（推荐）或已导出的界面"
 }
 
-/** 锁定确认：选择"拦截后跳转指定页"或"仅拦截"。任意界面锁定时均弹出。 */
+/** 锁定确认：跳转目标 + 解锁条件一起设置。任意界面锁定时均弹出。 */
 @Composable
 private fun LockLauncherDialog(
     packageName: String,
     isLauncher: Boolean,
-    onConfirm: (String?) -> Unit,
+    vModeInit: String?,
+    vDelayInit: Int?,
+    vPwdInit: String?,
+    vQuizCountInit: Int?,
+    onConfirm: (String?, String?, Int?, String?, Int?) -> Unit,
     onTest: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -238,18 +271,32 @@ private fun LockLauncherDialog(
     // 校验跳转目标：未导出的界面 shell 拉不起来，必须用深链
     val warning = remember(uri, packageName) { validateRedirectTarget(context, packageName, uri.trim()) }
 
+    var vMode by remember { mutableStateOf(vModeInit) }
+    var vDelay by remember { mutableStateOf((vDelayInit ?: VerifyGate.delaySeconds(context)).toString()) }
+    var vPwd by remember { mutableStateOf(vPwdInit ?: "") }
+    var vQuizCount by remember { mutableStateOf((vQuizCountInit ?: VerifyGate.quizCount(context)).toString()) }
+    val globalReq = VerifyGate.globalRequirement(context)
+    val globalDesc = when (globalReq.mode) {
+        VerifyGate.MODE_NONE -> "已关闭"
+        VerifyGate.METHOD_DELAY -> "等待" + globalReq.delaySec + "秒"
+        VerifyGate.METHOD_QUIZ -> "答题" + globalReq.quizCount + "题"
+        else -> "密码"
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (isLauncher) "锁定桌面入口" else "锁定该界面") },
         text = {
-            Column {
+            Column(
+                Modifier.verticalScroll(rememberScrollState())
+            ) {
                 Text(
                     if (isLauncher) "锁定后从桌面点击该 App：" else "锁定后该界面被打开时：",
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(bottom = 4.dp)
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = redirectMode, onClick = { redirectMode = true })
+                    androidx.compose.material3.RadioButton(selected = redirectMode, onClick = { redirectMode = true })
                     Text("跳转到指定页面", style = MaterialTheme.typography.bodyMedium)
                 }
                 if (redirectMode) {
@@ -298,24 +345,70 @@ private fun LockLauncherDialog(
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = !redirectMode, onClick = { redirectMode = false })
+                    androidx.compose.material3.RadioButton(selected = !redirectMode, onClick = { redirectMode = false })
                     Text("仅拦截（打开无反应）", style = MaterialTheme.typography.bodyMedium)
+                }
+                Spacer(Modifier.height(12.dp))
+                Text("解锁条件", style = MaterialTheme.typography.titleSmall)
+                VerifyModeRow(selected = vMode == null, title = "跟随全局（当前：$globalDesc）", onClick = { vMode = null })
+                VerifyModeRow(selected = vMode == VerifyGate.MODE_NONE, title = "无需验证", onClick = { vMode = VerifyGate.MODE_NONE })
+                VerifyModeRow(selected = vMode == VerifyGate.METHOD_DELAY, title = "等待倒计时", onClick = { vMode = VerifyGate.METHOD_DELAY })
+                if (vMode == VerifyGate.METHOD_DELAY) {
+                    Row(
+                        Modifier.padding(start = 40.dp, top = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("等待", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.width(8.dp))
+                        OutlinedTextField(
+                            value = vDelay,
+                            onValueChange = { raw -> vDelay = raw.filter { c -> c.isDigit() }.take(4) },
+                            suffix = { Text("秒") },
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyMedium
+                                .copy(fontFeatureSettings = "tnum", textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+                            modifier = Modifier.width(96.dp)
+                        )
+                    }
+                }
+                VerifyModeRow(selected = vMode == VerifyGate.METHOD_QUIZ, title = "答对若干道口算题", onClick = { vMode = VerifyGate.METHOD_QUIZ })
+                if (vMode == VerifyGate.METHOD_QUIZ) {
+                    Row(
+                        Modifier.padding(start = 40.dp, top = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("连对", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.width(8.dp))
+                        OutlinedTextField(
+                            value = vQuizCount,
+                            onValueChange = { raw -> vQuizCount = raw.filter { c -> c.isDigit() }.take(2) },
+                            suffix = { Text("题") },
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyMedium
+                                .copy(fontFeatureSettings = "tnum", textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+                            modifier = Modifier.width(80.dp)
+                        )
+                    }
+                }
+                VerifyModeRow(selected = vMode == VerifyGate.METHOD_PASSWORD, title = "输入密码", onClick = { vMode = VerifyGate.METHOD_PASSWORD })
+                if (vMode == VerifyGate.METHOD_PASSWORD) {
+                    OutlinedTextField(
+                        value = vPwd,
+                        onValueChange = { vPwd = it },
+                        label = { Text(if (vPwd.isBlank()) "留空则使用全局密码" else "该界面专用密码") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().padding(start = 40.dp)
+                    )
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(redirectUri) }) { Text("锁定") }
+            TextButton(onClick = {
+                onConfirm(redirectUri, vMode, vDelay.trim().toIntOrNull(), vPwd, vQuizCount.trim().toIntOrNull())
+            }) { Text("锁定") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }
         }
     )
-}
-
-@Composable
-private fun VerifyModeRow(selected: Boolean, title: String, onClick: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        androidx.compose.material3.RadioButton(selected = selected, onClick = onClick)
-        Text(title, style = MaterialTheme.typography.bodyMedium)
-    }
 }
