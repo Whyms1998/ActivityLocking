@@ -18,6 +18,8 @@ class ScheduleWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
 
     override suspend fun doWork(): Result {
         AppStore.ensureInit(applicationContext)
+        // Watcher 自愈：进程被系统杀掉后，最迟 15 分钟由本巡检拉起
+        runCatching { AmsController.ensureStarted() }
         ScheduleEngine.reconcile(applicationContext, killNow = false)
         FocusEngine.reconcile(applicationContext)
         return Result.success()

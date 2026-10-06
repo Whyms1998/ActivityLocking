@@ -124,10 +124,17 @@ private fun GateCard(
                     passed = ok
                 }
                 VerifyGate.METHOD_QUIZ -> {
+                    // 连答制：与全局验证对话框一致（题数取最强要求，防止改了题数这里只答一道就过）
+                    var solved by remember { mutableIntStateOf(0) }
                     var question by remember { mutableStateOf(VerifyGate.genQuiz()) }
                     var input by remember { mutableStateOf("") }
-                    val ok = input.isNotBlank() && input.trim().toIntOrNull() == question.second
-                    Text("答对这道口算题即可全部解锁：", style = MaterialTheme.typography.bodyMedium)
+                    val total = requirement.quizCount.coerceAtLeast(1)
+                    Text(
+                        "第 " + minOf(solved + 1, total) + " / " + total + " 题",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text("答对 $total 道口算题即可全部解锁：", style = MaterialTheme.typography.bodyMedium)
                     Spacer(Modifier.height(8.dp))
                     Text(question.first, style = MaterialTheme.typography.headlineSmall)
                     Spacer(Modifier.height(8.dp))
@@ -137,11 +144,15 @@ private fun GateCard(
                         placeholder = { Text("答案") },
                         singleLine = true
                     )
-                    if (input.isNotBlank() && !ok) {
-                        Spacer(Modifier.height(4.dp))
-                        Text("答案不对，再算算", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+                    // 答对自动进入下一题；全部答对后停止出新题
+                    LaunchedEffect(input) {
+                        if (solved < total && input.isNotBlank() && input.trim().toIntOrNull() == question.second) {
+                            solved++
+                            input = ""
+                            if (solved < total) question = VerifyGate.genQuiz()
+                        }
                     }
-                    passed = ok
+                    passed = solved >= total
                 }
                 VerifyGate.METHOD_PASSWORD -> {
                     var input by remember { mutableStateOf("") }
