@@ -37,6 +37,16 @@ public class WatcherMain {
     static final ConcurrentHashMap<String, String> PKG_BLOCKED = new ConcurrentHashMap<>();
     /** 组件锁有效期（epoch 毫秒）：到期自动放行（到期解锁）。0/缺失=不自动到期。 */
     static final ConcurrentHashMap<String, Long> BLOCKED_UNTIL = new ConcurrentHashMap<>();
+
+    // ---- 到点跳转：连续使用 N 分钟自动打开学习 App ----
+    static final ConcurrentHashMap<String, long[]> SESSION_LIMIT = new ConcurrentHashMap<>();
+    static final ConcurrentHashMap<String, String> SESSION_TARGET = new ConcurrentHashMap<>();
+    static final ConcurrentHashMap<String, Long> SESSION_ACC = new ConcurrentHashMap<>();
+    static volatile String CUR_PKG = null;
+    static volatile long LAST_EVT = 0;
+    static volatile long LAST_JUMP = 0;
+    static final long SESSION_GAP_MS = 90_000L;      // 前台事件间隔超过此值视为离开过
+    static final long JUMP_COOLDOWN_MS = 5 * 60_000L; // 跳转后冷却，防止连环跳
     /** 全局豁免截止时间（epoch ms）：临时解锁期间放行所有启动，0=无。 */
     static volatile long GLOBAL_EXEMPT_UNTIL = 0;
     /** 按天拦截计数（ISO 日期 -> 次数），供周报趋势。 */
@@ -255,6 +265,7 @@ public class WatcherMain {
                         log("controller re-registered tick=" + tick);
                     }
                     if (tick % 10 == 0) flushStats();
+                    sessionTick();
                 } catch (Throwable t) {
                     log("updater error: " + t);
                 }
@@ -303,6 +314,8 @@ public class WatcherMain {
             ConcurrentHashMap<String, String> next = new ConcurrentHashMap<>();
             ConcurrentHashMap<String, String> nextPkgs = new ConcurrentHashMap<>();
             ConcurrentHashMap<String, Long> nextUntil = new ConcurrentHashMap<>();
+            ConcurrentHashMap<String, long[]> nextSess = new ConcurrentHashMap<>();
+            ConcurrentHashMap<String, String> nextSessT = new ConcurrentHashMap<>();
             for (int i = 0; i < arr.length(); i++) {
                 Object el = arr.get(i);
                 if (el instanceof org.json.JSONObject) {
@@ -317,6 +330,12 @@ public class WatcherMain {
                         next.put(comp, o.optString("r", ""));
                         long until = o.optLong("u", 0);
                         if (until > 0) nextUntil.put(comp, until);
+                    }
+                    // 到点跳转：{"f":触发包,"s":时限秒,"t":目标}
+                    String sp = o.optString("f", "");
+                    if (!sp.isEmpty()) {
+                        nextSess.put(sp, new long[]{o.optLong("s", 0) * 1000L});
+                        nextSessT.put(sp, o.optString("t", ""));
                     }
                     // 全局临时豁免：{"g":1,"u":到期毫秒}，过期即视为无豁免
                     if (o.optInt("g", 0) == 1) {
@@ -333,7 +352,12 @@ public class WatcherMain {
             PKG_BLOCKED.putAll(nextPkgs);
             BLOCKED_UNTIL.clear();
             BLOCKED_UNTIL.putAll(nextUntil);
-            log("reload: c=" + next.size() + " p=" + nextPkgs.size() + " g=" + (GLOBAL_EXEMPT_UNTIL > 0 ? 1 : 0));
+            SESSION_LIMIT.clear();
+            SESSION_LIMIT.putAll(nextSess);
+            SESSION_TARGET.clear();
+            SESSION_TARGET.putAll(nextSessT);
+            log("reload: c=" + next.size() + " p=" + nextPkgs.size() + " f=" + nextSess.size()
+                + " g=" + (GLOBAL_EXEMPT_UNTIL > 0 ? 1 : 0));
             // 规则变化（可能换了跳转目标）→ 解除坏目标抑制，给新目标机会
             SUPPRESS_UNTIL.clear();
         } catch (Throwable ignored) {
@@ -345,6 +369,62 @@ public class WatcherMain {
      * 目标支持三种写法：深链（xhsdiscover://search）、组件名（pkg/Class）、
      * 裸类名（Class，视为被锁应用内的界面）。
      */
+    /** 前台事件：累计连续使用时长（切走即清零，间隔过久视为离开）。 */
+    static void sessionEvent(String pkg) {
+        try {
+            long now = android.os.SystemClock.elapsedRealtime();
+            if (pkg.equals(CUR_PKG)) {
+                long delta = now - LAST_EVT;
+                Long acc = SESSION_ACC.get(pkg);
+                long base = acc == null ? 0 : acc;
+                SESSION_ACC.put(pkg, (delta >= 0 && delta < SESSION_GAP_MS) ? base + delta : 0L);
+            } else {
+                CUR_PKG = pkg;
+                SESSION_ACC.put(pkg, 0L); // 刚进入，从零开始（连续使用语义）
+            }
+            LAST_EVT = now;
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 周期兜底：前台停留期间没有新事件时由 2s tick 累计并检查阈值。 */
+    static void sessionTick() {
+        try {
+            String cur = CUR_PKG;
+            if (cur == null || SESSION_LIMIT.isEmpty()) return;
+            long now = android.os.SystemClock.elapsedRealtime();
+            long delta = now - LAST_EVT;
+            if (delta < 0 || delta >= SESSION_GAP_MS) return; // 间隔过久：可能已离开/息屏
+            Long acc = SESSION_ACC.get(cur);
+            SESSION_ACC.put(cur, (acc == null ? 0 : acc) + delta);
+            LAST_EVT = now;
+            sessionCheck(cur);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    static void sessionCheck(String pkg) {
+        try {
+            long[] lim = SESSION_LIMIT.get(pkg);
+            if (lim == null) return;
+            Long acc = SESSION_ACC.get(pkg);
+            if (acc == null || acc < lim[0]) return;
+            long now = android.os.SystemClock.elapsedRealtime();
+            if (now - LAST_JUMP < JUMP_COOLDOWN_MS) return;
+            String target = SESSION_TARGET.get(pkg);
+            if (target == null || target.isEmpty()) return;
+            SESSION_ACC.put(pkg, 0L);
+            LAST_JUMP = now;
+            log("SESSION-JUMP " + pkg + " acc=" + (acc / 1000) + "s -> " + target);
+            REDIRECT_EXEC.execute(() -> {
+                if (!startViaBinder(pkg, target)) {
+                    startViaAm(pkg, target);
+                }
+            });
+        } catch (Throwable ignored) {
+        }
+    }
+
     /** 是否来自桌面点击（用户主动）：MAIN action + LAUNCHER 类别。 */
     static boolean isUserLaunch(Intent intent) {
         return "android.intent.action.MAIN".equals(intent.getAction())
@@ -492,6 +572,12 @@ public class WatcherMain {
             if (intent == null) return true;
             ComponentName cn = intent.getComponent();
             if (cn == null) return true;
+            // 会话计时（到点跳转）：临时解锁期间不累计（休息时间不催学习）
+            if (GLOBAL_EXEMPT_UNTIL > 0 && System.currentTimeMillis() < GLOBAL_EXEMPT_UNTIL) {
+                LAST_EVT = android.os.SystemClock.elapsedRealtime();
+            } else {
+                sessionEvent(pkg);
+            }
             // 全局临时豁免：临时解锁期间放行一切（优先于规则/包级/超额拦截）
             if (GLOBAL_EXEMPT_UNTIL > 0 && System.currentTimeMillis() < GLOBAL_EXEMPT_UNTIL) {
                 log("ALLOW(global-exempt) " + pkg + "/" + cn.getClassName());
@@ -562,6 +648,12 @@ public class WatcherMain {
 
         @Override
         public boolean activityResuming(String pkg) {
+            if (GLOBAL_EXEMPT_UNTIL > 0 && System.currentTimeMillis() < GLOBAL_EXEMPT_UNTIL) {
+                LAST_EVT = android.os.SystemClock.elapsedRealtime();
+            } else {
+                sessionEvent(pkg);
+                sessionCheck(pkg);
+            }
             return true;
         }
 

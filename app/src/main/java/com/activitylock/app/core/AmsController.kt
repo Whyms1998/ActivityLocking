@@ -65,6 +65,18 @@ object AmsController {
                         .put("r", "")
                 )
             }
+            // 到点跳转层：连续使用 N 分钟 → 拉起学习 App
+            // 已超额/专注中的包跳过（它们有更严的整包拦截，无需软引导）
+            for (c in AppStore.sessionCfgs) {
+                if (!c.enabled || c.pkg in over || c.pkg in focus) continue
+                val resolved = resolveSessionTarget(c.target) ?: continue
+                arr.put(
+                    org.json.JSONObject()
+                        .put("f", c.pkg)
+                        .put("s", c.limitMin * 60)
+                        .put("t", resolved)
+                )
+            }
             // 临时解锁层：全局豁免（锁定强度开启"计划窗口内禁用"时不激活）
             val exemptSuppressed = LockStrength.noExemptInSchedule(ctx) &&
                 ScheduleEngine.anyActive(AppStore.schedules)
@@ -80,6 +92,17 @@ object AmsController {
             f.parentFile?.mkdirs()
             f.writeText(arr.toString())
         }
+    }
+
+    /** 到点跳转目标解析：包名 → 启动组件（watcher 查不了 PM，App 侧解析好）；深链/组件名原样。 */
+    private fun resolveSessionTarget(raw: String): String? {
+        val t = raw.trim()
+        if (t.isEmpty()) return null
+        if (t.contains("://") || t.contains("/")) return t
+        val ctx = AppStore.context()
+        return runCatching {
+            ctx.packageManager.getLaunchIntentForPackage(t)?.component?.flattenToString()
+        }.getOrNull()
     }
 
     /** 超额提示页（本 App 内，exported，供 Watcher 以 shell 身份拉起）。 */

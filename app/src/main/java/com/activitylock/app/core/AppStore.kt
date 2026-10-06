@@ -34,11 +34,15 @@ object AppStore {
     var scenes by mutableStateOf<List<Scene>>(emptyList())
         private set
 
+    var sessionCfgs by mutableStateOf<List<SessionCfg>>(emptyList())
+        private set
+
     private lateinit var ruleStore: RuleStore
     private lateinit var historyStore: HistoryStore
     private lateinit var presetStore: PresetStore
     private lateinit var scheduleStore: ScheduleStore
     private lateinit var sceneStore: SceneStore
+    private lateinit var sessionStore: SessionStore
     private lateinit var appContext: Context
     private val scope = kotlinx.coroutines.CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
 
@@ -50,11 +54,13 @@ object AppStore {
         presetStore = PresetStore(appContext.filesDir)
         scheduleStore = ScheduleStore(appContext.filesDir)
         sceneStore = SceneStore(appContext.filesDir)
+        sessionStore = SessionStore(appContext.filesDir)
         rules = ruleStore.rules
         history = historyStore.entries
         userPresets = presetStore.presets
         schedules = scheduleStore.schedules
         scenes = sceneStore.scenes
+        sessionCfgs = sessionStore.entries
         reloadApps()
     }
 
@@ -132,6 +138,26 @@ object AppStore {
         if (!::ruleStore.isInitialized) return
         ruleStore.updateLockUntil(pkg, cls, untilMs)
         rules = ruleStore.rules
+    }
+
+    // ---- 到点跳转 ----
+
+    fun upsertSession(cfg: SessionCfg) {
+        if (!::sessionStore.isInitialized) return
+        sessionStore.upsert(cfg)
+        sessionCfgs = sessionStore.entries
+    }
+
+    fun removeSession(pkg: String) {
+        if (!::sessionStore.isInitialized) return
+        sessionStore.remove(pkg)
+        sessionCfgs = sessionStore.entries
+    }
+
+    fun setSessionEnabled(pkg: String, enabled: Boolean) {
+        if (!::sessionStore.isInitialized) return
+        sessionStore.setEnabled(pkg, enabled)
+        sessionCfgs = sessionStore.entries
     }
 
     fun updateLocked(pkg: String, cls: String, locked: Boolean) {

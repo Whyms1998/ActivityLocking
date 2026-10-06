@@ -4,6 +4,7 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -11,10 +12,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -27,6 +31,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -42,7 +48,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.activitylock.app.core.AppStore
 import com.activitylock.app.core.LockRule
+import com.activitylock.app.core.AppEntry
 import com.activitylock.app.core.QuotaService
+import com.activitylock.app.core.SessionCfg
 import com.activitylock.app.core.QuotaState
 import com.activitylock.app.core.UsageTracker
 import com.activitylock.app.core.VerifyGate
@@ -62,6 +70,7 @@ fun QuotaScreen(onBack: () -> Unit) {
     val quotaPkgs = QuotaState.quotaPackages(rules)
     val hasPermission = UsageTracker.hasPermission(context)
     var adding by remember { mutableStateOf(false) }
+    var addingSession by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf<String?>(null) }
     var pendingVerifyRemove by remember { mutableStateOf<String?>(null) }
 
@@ -119,9 +128,60 @@ fun QuotaScreen(onBack: () -> Unit) {
                 )
             }
 
+            // 到点跳转：打开触发 App 连续 N 分钟后，自动打开学习 App（计时在系统级拦截器，切走即清零）
+            Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp)) {
+                Column(Modifier.padding(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("到点跳转", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                "打开触发 App 连续满 N 分钟，自动打开学习 App；中途切走即重新计时。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        TextButton(onClick = { addingSession = true }) { Text("＋ 新增") }
+                    }
+                    AppStore.sessionCfgs.forEach { c ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            AppIcon(c.pkg, 30.dp)
+                            Text("  →  ", style = MaterialTheme.typography.labelMedium)
+                            if (c.target.contains("://")) {
+                                Text("\uD83D\uDD17", style = MaterialTheme.typography.titleMedium)
+                            } else {
+                                AppIcon(c.target.substringBefore('/'), 30.dp)
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "打开「" + (AppStore.findApp(c.pkg)?.label ?: c.pkg.substringAfterLast('.')) +
+                                    "」" + c.limitMin + " 分钟后自动打开「" + sessionTargetLabel(c.target) + "」",
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Switch(
+                                checked = c.enabled,
+                                onCheckedChange = { on ->
+                                    AppStore.setSessionEnabled(c.pkg, on)
+                                    refresh(context)
+                                }
+                            )
+                            IconButton(onClick = {
+                                AppStore.removeSession(c.pkg)
+                                refresh(context)
+                            }) {
+                                Icon(Icons.Default.Delete, contentDescription = "删除")
+                            }
+                        }
+                    }
+                }
+            }
+
             if (quotaPkgs.isEmpty()) {
                 Column(
-                    Modifier.fillMaxSize().padding(32.dp),
+                    Modifier.fillMaxWidth().weight(1f).padding(32.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text("还没有限额", style = MaterialTheme.typography.titleMedium)
@@ -133,7 +193,7 @@ fun QuotaScreen(onBack: () -> Unit) {
                     )
                 }
             } else {
-                LazyColumn(Modifier.fillMaxSize()) {
+                LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
                     items(quotaPkgs.keys.sorted(), key = { it }) { pkg ->
                         val min = quotaPkgs[pkg] ?: 0
                         val used = if (hasPermission) UsageTracker.todayMinutes(context, pkg) else 0
@@ -185,6 +245,17 @@ fun QuotaScreen(onBack: () -> Unit) {
                 adding = false
             },
             onDismiss = { adding = false }
+        )
+    }
+
+    if (addingSession) {
+        SessionAddDialog(
+            onConfirm = { trigger, target, min ->
+                AppStore.upsertSession(SessionCfg(pkg = trigger, target = target, limitMin = min))
+                refresh(context)
+                addingSession = false
+            },
+            onDismiss = { addingSession = false }
         )
     }
 
@@ -275,4 +346,125 @@ private fun QuotaAddDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )
+}
+
+private fun sessionTargetLabel(target: String): String {
+    val t = target.trim()
+    return when {
+        t.contains("://") -> "深链 " + t.take(16) + "…"
+        t.contains("/") ->
+            (AppStore.findApp(t.substringBefore('/'))?.label
+                ?: t.substringBefore('/').substringAfterLast('.'))
+        else -> AppStore.findApp(t)?.label ?: t.substringAfterLast('.')
+    }
+}
+
+@Composable
+private fun SessionAddDialog(
+    onConfirm: (String, String, Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var query1 by remember { mutableStateOf("") }
+    var query2 by remember { mutableStateOf("") }
+    var trigger by remember { mutableStateOf<String?>(null) }
+    var target by remember { mutableStateOf<String?>(null) }
+    var minutes by remember { mutableStateOf("1") }
+
+    fun candidates(q: String, exclude: String?): List<AppEntry> =
+        AppStore.apps
+            .filter {
+                (it.label.contains(q, true) || it.packageName.contains(q, true)) &&
+                    it.packageName != exclude
+            }
+            .sortedBy { it.label }
+            .take(40)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("新增到点跳转") },
+        text = {
+            Column {
+                Text("触发 App（要限制刷的）", style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = query1,
+                    onValueChange = { query1 = it },
+                    placeholder = { Text("搜索 App") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                PickerList(candidates(query1, target), trigger) { trigger = it }
+                Spacer(Modifier.height(8.dp))
+                Text("跳转目标（学习去向）", style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = query2,
+                    onValueChange = { query2 = it },
+                    placeholder = { Text("搜索 App") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                PickerList(candidates(query2, trigger), target) { target = it }
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = minutes,
+                    onValueChange = { minutes = it.filter { c -> c.isDigit() }.take(3) },
+                    label = { Text("连续使用（分钟）") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = trigger != null && target != null &&
+                    (minutes.toIntOrNull() ?: 0) in 1..240,
+                onClick = { onConfirm(trigger!!, target!!, minutes.toInt()) }
+            ) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
+}
+
+@Composable
+private fun PickerList(
+    pkgs: List<AppEntry>,
+    selected: String?,
+    onSelect: (String) -> Unit,
+) {
+    Column(
+        Modifier
+            .heightIn(max = 140.dp)
+            .verticalScroll(rememberScrollState())
+    ) {
+        if (pkgs.isEmpty()) {
+            Text(
+                "没有匹配的应用",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
+        }
+        pkgs.forEach { app ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { onSelect(app.packageName) },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(
+                    selected = selected == app.packageName,
+                    onClick = { onSelect(app.packageName) }
+                )
+                AppIcon(app.packageName, 26.dp)
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    app.label,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
 }
