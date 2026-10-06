@@ -248,19 +248,6 @@ fun FavoritesScreen(
         }
     }
 
-    fun quickFocus() {
-        if (focusActive) { AppStore.toast("专注会话进行中"); return }
-        val cfg = FocusState.lastConfig(ctx)
-        if (cfg == null) { onOpenFocus(); return }
-        sceneBusy = true
-        scope.launch {
-            val err = FocusEngine.start(ctx, cfg.mode, cfg.members.toSet(), cfg.durationMin, cfg.strict)
-            AppStore.toast(if (err == null) "专注开始（" + cfg.durationMin + " 分钟）" else err ?: "")
-            refreshTick++
-            sceneBusy = false
-        }
-    }
-
     fun toggleScene(scene: Scene) {
         if (sceneBusy) return
         if (!scene.active) {
@@ -314,7 +301,6 @@ fun FavoritesScreen(
             onOpenSchedules = onOpenSchedules,
             onOpenQuota = onOpenQuota,
             onOpenStats = onOpenStats,
-            onQuickFocus = { quickFocus() },
         )
 
         // 一键专注 + 破功回流
@@ -864,7 +850,6 @@ private fun QuickPanel(
     onOpenSchedules: () -> Unit,
     onOpenQuota: () -> Unit,
     onOpenStats: () -> Unit,
-    onQuickFocus: () -> Unit,
 ) {
     val ctx = LocalContext.current
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
@@ -899,9 +884,6 @@ private fun QuickPanel(
             })
             AssistChip(onClick = onOpenQuota, modifier = Modifier.weight(1f), label = {
                 Text("限额", maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-            })
-            AssistChip(onClick = onQuickFocus, modifier = Modifier.weight(1f), label = {
-                Text("专注", maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
             })
             AssistChip(onClick = onOpenStats, modifier = Modifier.weight(1f), label = {
                 Text("统计", maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
