@@ -88,6 +88,7 @@ object FocusState {
     /** 记录一次提前结束（破功回流用）。 */
     fun recordEarlyEnd(ctx: Context) {
         configPrefs(ctx).edit().putLong("last_early_end", System.currentTimeMillis()).apply()
+        StreakStore.markBroken(ctx) // 专注破功
     }
 
     fun lastEarlyEnd(ctx: Context): Long =

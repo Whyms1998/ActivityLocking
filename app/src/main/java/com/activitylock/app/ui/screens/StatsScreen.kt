@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import com.activitylock.app.core.AppStore
 import com.activitylock.app.core.BlockStats
 import com.activitylock.app.core.QuotaState
+import com.activitylock.app.core.StreakStore
 import com.activitylock.app.ui.components.AppIcon
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -120,6 +121,29 @@ fun StatsScreen(onBack: () -> Unit) {
                             style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                }
+                item {
+                    // 连续守护：ADHD 正反馈（超额/专注破功会中断 streak）
+                    val streak = remember(s) { StreakStore.streakDays(ctx) }
+                    val todayBroken = StreakStore.todayBroken(ctx)
+                    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("🔥", style = MaterialTheme.typography.headlineMedium)
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "连续守护 $streak 天",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    if (todayBroken) "今日已破功，明天重新累积"
+                                    else "今日暂未破功，守住就是胜利",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
                 }
                 item {

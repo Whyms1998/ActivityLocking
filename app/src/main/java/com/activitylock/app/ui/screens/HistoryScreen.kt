@@ -1,5 +1,7 @@
 package com.activitylock.app.ui.screens
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -114,8 +117,51 @@ fun HistoryScreen(onBack: () -> Unit) {
                     )
                 }
             } else {
+                // 按天分组：今天默认展开，更早的折叠为一行（瘦身：一眼看到今天，历史按需展开）
+                val today = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date()) }
+                val yesterday = remember {
+                    SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                        .format(Date(System.currentTimeMillis() - 86_400_000L))
+                }
+                val groups = remember(filtered) {
+                    filtered.groupBy { timeFmt.format(Date(it.time)).substring(0, 10) }
+                }
+                var expandedDays by remember { mutableStateOf(setOf(today)) }
                 LazyColumn(Modifier.fillMaxSize()) {
-                    items(filtered, key = { "${it.packageName}/${it.activityName}/${it.time}" }) { h ->
+                    groups.forEach { (day, list) ->
+                        val isOpen = day in expandedDays
+                        item(key = "hdr_$day") {
+                            val dayLabel = when (day) {
+                                today -> "今天"
+                                yesterday -> "昨天"
+                                else -> day.substring(5).replace('-', '月') + "日"
+                            }
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        expandedDays =
+                                            if (isOpen) expandedDays - day else expandedDays + day
+                                    }
+                                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    dayLabel,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    if (isOpen) "收起" else "${list.size} 条记录",
+                                    style = MaterialTheme.typography.labelSmall
+                                        .copy(fontFeatureSettings = "tnum"),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        if (isOpen) {
+                            items(list, key = { "${it.packageName}/${it.activityName}/${it.time}" }) { h ->
                         val isFav = AppStore.hasRule(h.packageName, h.activityName)
                         Card(
                             Modifier
@@ -180,6 +226,8 @@ fun HistoryScreen(onBack: () -> Unit) {
                                     AppStore.removeHistory(h.packageName, h.activityName)
                                     refreshTick++
                                 }) { Text("删除") }
+                            }
+                        }
                             }
                         }
                     }

@@ -26,6 +26,7 @@ object QuotaState {
     }
 
     fun markOver(ctx: Context, pkg: String) {
+        StreakStore.markBroken(ctx) // 超额 = 当日破功
         val p = prefs(ctx)
         if (p.getString("date", null) != today()) {
             p.edit().putString("date", today()).putStringSet("over", setOf(pkg)).apply()
