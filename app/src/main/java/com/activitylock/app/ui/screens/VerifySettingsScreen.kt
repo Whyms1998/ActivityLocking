@@ -267,9 +267,9 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
             Spacer(Modifier.height(16.dp))
             Text(
                 "验证在收藏夹解锁、删除和磁贴「全部解锁」时生效；锁定操作不受影响。\n" +
-                    "每个界面可以在收藏夹「编辑」里单独设置解锁条件（无需验证 / 等待倒计时 / 答题 / 专属密码），" +
+                    "每个界面可以在收藏夹「编辑」里单独设置解锁条件（等待倒计时 / 答题 / 随机密码 / 专属密码），" +
                     "单独设置优先于全局；磁贴全部解锁会取所有界面的最强条件。\n" +
-                    "降低任何门槛的修改（包括把某界面改成无需验证）都会要求当场验证。",
+                    "降低任何门槛的修改（换方式、减题数、缩位数等）都会要求当场验证。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

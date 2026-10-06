@@ -83,7 +83,7 @@ fun UnlockConditionEditor(
                 selected = mode == VerifyGate.METHOD_QUIZ,
                 onClick = { onModeChange(VerifyGate.METHOD_QUIZ) }
             )
-            Text("答对 $quizCount 道口算题", style = MaterialTheme.typography.bodyMedium)
+            Text("答对口算题", style = MaterialTheme.typography.bodyMedium)
         }
         if (mode == VerifyGate.METHOD_QUIZ) {
             Row(
@@ -111,7 +111,7 @@ fun UnlockConditionEditor(
                 selected = mode == VerifyGate.METHOD_RANDOM,
                 onClick = { onModeChange(VerifyGate.METHOD_RANDOM) }
             )
-            Text("输入随机密码（$randomDigits 位）", style = MaterialTheme.typography.bodyMedium)
+            Text("输入随机密码", style = MaterialTheme.typography.bodyMedium)
         }
         if (mode == VerifyGate.METHOD_RANDOM) {
             Row(

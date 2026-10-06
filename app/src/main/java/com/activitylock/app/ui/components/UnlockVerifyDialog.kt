@@ -58,7 +58,8 @@ fun UnlockVerifyDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false,
+            // decorFitsSystemWindows=false 会导致对话框内输入法不弹出（Compose 已知问题），必须保持默认
+            decorFitsSystemWindows = true,
         )
     ) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
