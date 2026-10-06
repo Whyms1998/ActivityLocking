@@ -49,7 +49,10 @@ class UnlockGateActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppStore.ensureInit(applicationContext)
-        val requirement = VerifyGate.bulkRequirement(applicationContext, AppStore.rules)
+        val requirement = if (VerifyGate.outsideUnlockWindow(applicationContext))
+            VerifyGate.Requirement("window_blocked", 0, emptyList())
+        else VerifyGate.bulkRequirement(applicationContext, AppStore.rules)
+        val windowDesc = VerifyGate.unlockWindowDesc(applicationContext)
         setContent {
             ActivityLockTheme {
                 Surface(
@@ -59,6 +62,7 @@ class UnlockGateActivity : ComponentActivity() {
                     Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                         GateCard(
                             requirement = requirement,
+                            windowDesc = windowDesc,
                             onConfirmed = {
                                 Thread {
                                     runBlocking {
@@ -84,6 +88,7 @@ class UnlockGateActivity : ComponentActivity() {
 @Composable
 private fun GateCard(
     requirement: VerifyGate.Requirement,
+    windowDesc: String,
     onConfirmed: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -168,6 +173,15 @@ private fun GateCard(
                         style = MaterialTheme.typography.bodyMedium
                     )
                     passed = remaining <= 0
+                }
+                "window_blocked" -> {
+                    Text(
+                        "已设置解锁时间范围 " + windowDesc +
+                            "，当前时段无法全部解锁。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    passed = false
                 }
                 else -> {
                     Text("没有需要验证的界面。", style = MaterialTheme.typography.bodyMedium)

@@ -51,9 +51,13 @@ class TempUnlockActivity : ComponentActivity() {
         val lockedRules = AppStore.rules.filter { it.locked }
         val lockedCount = lockedRules.size
         val memberReq = VerifyGate.bulkRequirement(this, lockedRules)
-        val requirement = if (memberReq.isNone) {
-            VerifyGate.Requirement(VerifyGate.METHOD_QUIZ, 0, emptyList())
-        } else memberReq
+        val requirement = when {
+            VerifyGate.outsideUnlockWindow(applicationContext) ->
+                VerifyGate.Requirement("window_blocked", 0, emptyList())
+            memberReq.isNone ->
+                VerifyGate.Requirement(VerifyGate.METHOD_QUIZ, 0, emptyList())
+            else -> memberReq
+        }
 
         setContent {
             ActivityLockTheme {
@@ -118,7 +122,7 @@ class TempUnlockActivity : ComponentActivity() {
                                     input.trim().toIntOrNull() != question.second
                                 if (total > 1) {
                                     Text(
-                                        "第 ${solved + 1} / $total 题",
+                                        "第 ${minOf(solved + 1, total)} / $total 题",
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -134,12 +138,10 @@ class TempUnlockActivity : ComponentActivity() {
                                     value = input,
                                     onValueChange = { raw ->
                                         input = raw.filter { c -> c.isDigit() || c == '-' }
-                                        if (input.isNotBlank() && input.trim().toIntOrNull() == question.second) {
+                                        if (solved < total && input.isNotBlank() && input.trim().toIntOrNull() == question.second) {
                                             solved++
-                                            if (solved < total) {
-                                                input = ""
-                                                question = VerifyGate.genQuiz()
-                                            }
+                                            input = ""
+                                            if (solved < total) question = VerifyGate.genQuiz()
                                         }
                                     },
                                     placeholder = { Text("答案") },
@@ -197,6 +199,18 @@ class TempUnlockActivity : ComponentActivity() {
                                 }
                                 Spacer(Modifier.weight(1f))
                                 Actions(remaining <= 0, onDismiss = { finish() }) {
+                                    confirmUnlock(duration)
+                                }
+                            }
+                            "window_blocked" -> {
+                                Text(
+                                    "已设置解锁时间范围 " + VerifyGate.unlockWindowDesc(applicationContext) +
+                                        "，当前时段无法临时解锁。",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.weight(1f))
+                                Actions(false, onDismiss = { finish() }) {
                                     confirmUnlock(duration)
                                 }
                             }

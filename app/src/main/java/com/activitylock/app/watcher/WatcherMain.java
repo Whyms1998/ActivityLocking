@@ -35,6 +35,8 @@ public class WatcherMain {
     static final ConcurrentHashMap<String, String> BLOCKED = new ConcurrentHashMap<>();
     /** 包名 -> 超额提示页组件（额度用完的 App 整包拒绝所有启动）。 */
     static final ConcurrentHashMap<String, String> PKG_BLOCKED = new ConcurrentHashMap<>();
+    /** 组件锁有效期（epoch 毫秒）：到期自动放行（到期解锁）。0/缺失=不自动到期。 */
+    static final ConcurrentHashMap<String, Long> BLOCKED_UNTIL = new ConcurrentHashMap<>();
     /** 全局豁免截止时间（epoch ms）：临时解锁期间放行所有启动，0=无。 */
     static volatile long GLOBAL_EXEMPT_UNTIL = 0;
     /** 按天拦截计数（ISO 日期 -> 次数），供周报趋势。 */
@@ -300,6 +302,7 @@ public class WatcherMain {
             log("reload file: " + sb.substring(0, Math.min(sb.length(), 200)));
             ConcurrentHashMap<String, String> next = new ConcurrentHashMap<>();
             ConcurrentHashMap<String, String> nextPkgs = new ConcurrentHashMap<>();
+            ConcurrentHashMap<String, Long> nextUntil = new ConcurrentHashMap<>();
             for (int i = 0; i < arr.length(); i++) {
                 Object el = arr.get(i);
                 if (el instanceof org.json.JSONObject) {
@@ -310,7 +313,11 @@ public class WatcherMain {
                         continue;
                     }
                     String comp = o.optString("c", "");
-                    if (!comp.isEmpty()) next.put(comp, o.optString("r", ""));
+                    if (!comp.isEmpty()) {
+                        next.put(comp, o.optString("r", ""));
+                        long until = o.optLong("u", 0);
+                        if (until > 0) nextUntil.put(comp, until);
+                    }
                     // 全局临时豁免：{"g":1,"u":到期毫秒}，过期即视为无豁免
                     if (o.optInt("g", 0) == 1) {
                         long u = o.optLong("u", 0);
@@ -324,6 +331,8 @@ public class WatcherMain {
             BLOCKED.putAll(next);
             PKG_BLOCKED.clear();
             PKG_BLOCKED.putAll(nextPkgs);
+            BLOCKED_UNTIL.clear();
+            BLOCKED_UNTIL.putAll(nextUntil);
             log("reload: c=" + next.size() + " p=" + nextPkgs.size() + " g=" + (GLOBAL_EXEMPT_UNTIL > 0 ? 1 : 0));
             // 规则变化（可能换了跳转目标）→ 解除坏目标抑制，给新目标机会
             SUPPRESS_UNTIL.clear();
@@ -511,6 +520,14 @@ public class WatcherMain {
             String hit = BLOCKED.containsKey(flat) ? flat
                     : (BLOCKED.containsKey(full) ? full : null);
             if (hit == null) return true;
+            // 到期解锁：锁定有效期已过 → 自动解除该条锁定（放行并清掉内存规则）
+            Long until = BLOCKED_UNTIL.get(hit);
+            if (until != null && until > 0 && System.currentTimeMillis() >= until) {
+                BLOCKED.remove(hit);
+                BLOCKED_UNTIL.remove(hit);
+                log("EXPIRED-UNLOCK " + hit);
+                return true;
+            }
             String redirect = BLOCKED.get(hit);
             log("BLOCK " + hit + (userLaunch ? " (launcher)" : ""));
             countBlock(pkg, hit);

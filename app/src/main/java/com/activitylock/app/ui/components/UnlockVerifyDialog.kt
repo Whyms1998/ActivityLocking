@@ -47,11 +47,17 @@ fun UnlockVerifyDialog(
     requirement: VerifyGate.Requirement? = null,
     title: String = "解锁验证",
     hint: String = "自律提醒",
+    enforceWindow: Boolean = true,
     onConfirmed: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val ctx = LocalContext.current
-    val req = requirement ?: VerifyGate.globalRequirement(ctx)
+    // 时段外：验证一律不通过（解锁时间范围）
+    // enforceWindow=false 用于设置页防绕过修改：时间范围只约束"解锁去玩"，
+    // 不约束调整自己的设置（否则窗外连关闭限制都做不到，形成死锁）
+    val req = if (enforceWindow && VerifyGate.outsideUnlockWindow(ctx))
+        VerifyGate.Requirement("window_blocked", 0, emptyList())
+    else (requirement ?: VerifyGate.globalRequirement(ctx))
     val tnum = TextStyle(fontFeatureSettings = "tnum")
 
     Dialog(
@@ -92,7 +98,7 @@ fun UnlockVerifyDialog(
                         val total = req.quizCount.coerceAtLeast(1)
                         val ok = solved >= total
                         Text(
-                            "第 " + (solved + 1) + " / " + total + " 题",
+                            "第 " + minOf(solved + 1, total) + " / " + total + " 题",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -114,12 +120,12 @@ fun UnlockVerifyDialog(
                                 .copy(fontFeatureSettings = "tnum", textAlign = TextAlign.Center),
                             modifier = Modifier.fillMaxWidth()
                         )
-                        // 答对自动进入下一题；全部答对后可确认
+                        // 答对自动进入下一题；全部答对后停止出新题
                         androidx.compose.runtime.LaunchedEffect(input) {
-                            if (input.isNotBlank() && input.trim().toIntOrNull() == question.second) {
+                            if (solved < total && input.isNotBlank() && input.trim().toIntOrNull() == question.second) {
                                 solved++
-                                question = VerifyGate.genQuiz()
                                 input = ""
+                                if (solved < total) question = VerifyGate.genQuiz()
                             }
                         }
                         if (input.isNotBlank() && input.trim().toIntOrNull() != question.second) {
@@ -241,6 +247,19 @@ fun UnlockVerifyDialog(
                             Button(enabled = remaining <= 0, onClick = { onConfirmed() }) {
                                 Text(if (remaining > 0) "请等待" else "确认解锁")
                             }
+                        }
+                    }
+                    "window_blocked" -> {
+                        Text(
+                            "已设置解锁时间范围 " + VerifyGate.unlockWindowDesc(ctx) +
+                                "，当前时段无法通过验证解锁。",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.weight(1f))
+                        Row(Modifier.fillMaxWidth()) {
+                            Spacer(Modifier.weight(1f))
+                            TextButton(onClick = onDismiss) { Text("我知道了") }
                         }
                     }
                     else -> {

@@ -29,7 +29,17 @@ abstract class BaseLockTileService : TileService() {
             // 自律模式：全局验证或任一界面单独设了解锁条件，全解锁都要先通过最强条件
             val i = android.content.Intent(applicationContext, UnlockGateActivity::class.java)
                 .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(i)
+            // HyperOS 会静默拦截磁贴服务的普通 startActivity，必须走 PendingIntent
+            val pi = android.app.PendingIntent.getActivity(
+                applicationContext, 0, i,
+                android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            if (android.os.Build.VERSION.SDK_INT >= 34) {
+                startActivityAndCollapse(pi)
+            } else {
+                @Suppress("DEPRECATION")
+                startActivityAndCollapse(i)
+            }
             return
         }
         applyAll(rules, targetLocked)

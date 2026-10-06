@@ -40,11 +40,12 @@ object AmsController {
                         r.packageName in over -> QUOTA_GATE_COMPONENT
                         else -> r.redirectUri ?: ""
                     }
-                    arr.put(
-                        org.json.JSONObject()
-                            .put("c", "${r.packageName}/${r.activityName}")
-                            .put("r", redirect)
-                    )
+                    val entry = org.json.JSONObject()
+                        .put("c", "${r.packageName}/${r.activityName}")
+                        .put("r", redirect)
+                    // 到期解锁：带截止时间，Watcher 过期后自动放行
+                    if (r.lockUntil > 0) entry.put("u", r.lockUntil)
+                    arr.put(entry)
                 }
             // 包级超额拦截：额度用完的 App 整包拒绝（无论规则解锁与否、无论哪个界面）
             for (pkg in over) {

@@ -6,5 +6,5 @@ package com.activitylock.app.core
  * 此前两处各自维护常量，多次升级时漏改一处导致 Watcher 永不换代。
  */
 object WatcherVersion {
-    const val VERSION = 15
+    const val VERSION = 16
 }

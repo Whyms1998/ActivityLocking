@@ -63,6 +63,44 @@ object VerifyGate {
         prefs(ctx).edit().putInt("random_digits", digits.coerceIn(4, 12)).apply()
     }
 
+    // ---- 解锁时间范围：只在设定时段内允许通过验证解锁（自律约束，跨午夜支持）----
+
+    fun unlockWindowEnabled(ctx: Context): Boolean = prefs(ctx).getBoolean("unlock_window_enabled", false)
+
+    fun unlockWindowStart(ctx: Context): Int = prefs(ctx).getInt("unlock_window_start", 22 * 60)
+
+    fun unlockWindowEnd(ctx: Context): Int = prefs(ctx).getInt("unlock_window_end", 7 * 60)
+
+    fun saveUnlockWindow(ctx: Context, enabled: Boolean, startMin: Int, endMin: Int) {
+        prefs(ctx).edit()
+            .putBoolean("unlock_window_enabled", enabled)
+            .putInt("unlock_window_start", startMin.coerceIn(0, 24 * 60 - 1))
+            .putInt("unlock_window_end", endMin.coerceIn(0, 24 * 60 - 1))
+            .apply()
+    }
+
+    /** 当前时刻是否在允许解锁的时段内（start==end 视为全天允许）。 */
+    fun inUnlockWindow(ctx: Context): Boolean {
+        if (!unlockWindowEnabled(ctx)) return true
+        val start = unlockWindowStart(ctx)
+        val end = unlockWindowEnd(ctx)
+        if (start == end) return true
+        val cal = java.util.Calendar.getInstance()
+        val m = cal.get(java.util.Calendar.HOUR_OF_DAY) * 60 + cal.get(java.util.Calendar.MINUTE)
+        return if (start < end) m in start until end
+        else m >= start || m < end
+    }
+
+    /** 不在允许解锁时段 → 验证一律不通过。 */
+    fun outsideUnlockWindow(ctx: Context): Boolean = !inUnlockWindow(ctx)
+
+    /** 时段文案，如 "22:00-07:00"。 */
+    fun unlockWindowDesc(ctx: Context): String {
+        fun fmt(min: Int): String =
+            "%02d:%02d".format(min / 60, min % 60)
+        return fmt(unlockWindowStart(ctx)) + "-" + fmt(unlockWindowEnd(ctx))
+    }
+
     /** 生成指定位数的随机密码（首位非零）。 */
     fun genRandomCode(digits: Int): String {
         val r = java.util.Random()

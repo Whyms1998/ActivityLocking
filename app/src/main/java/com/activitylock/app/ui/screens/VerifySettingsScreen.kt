@@ -43,6 +43,16 @@ import com.activitylock.app.ui.components.UnlockVerifyDialog
  * 每一次都必须当场通过"最强验证"（全局 + 各界面单独条件的最大值），
  * 不存在"本次会话已验证"的通行证——否则等待 5 秒就能关掉整个验证体系。
  */
+private fun hmText(min: Int): String = "%02d:%02d".format(min / 60, min % 60)
+
+private fun parseHm(text: String): Int? {
+    val m = Regex("^([0-9]{1,2}):([0-9]{2})$").find(text.trim()) ?: return null
+    val h = m.groupValues[1].toIntOrNull() ?: return null
+    val mm = m.groupValues[2].toIntOrNull() ?: return null
+    if (h !in 0..23 || mm !in 0..59) return null
+    return h * 60 + mm
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VerifySettingsScreen(onBack: () -> Unit) {
@@ -53,6 +63,9 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
     var delaySec by remember { mutableStateOf(VerifyGate.delaySeconds(ctx)) }
     var quizCount by remember { mutableStateOf(VerifyGate.quizCount(ctx)) }
     var randomDigits by remember { mutableStateOf(VerifyGate.randomDigits(ctx)) }
+    var windowEnabled by remember { mutableStateOf(VerifyGate.unlockWindowEnabled(ctx)) }
+    var windowStartText by remember { mutableStateOf(hmText(VerifyGate.unlockWindowStart(ctx))) }
+    var windowEndText by remember { mutableStateOf(hmText(VerifyGate.unlockWindowEnd(ctx))) }
 
     // 削弱性修改：逐次验证，无会话通行证
     var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -134,6 +147,58 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
             }
 
             if (enabled) {
+                Spacer(Modifier.height(16.dp))
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("解锁时间范围", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "只在设定时段内允许解锁（支持跨午夜，如 22:00-07:00），其余时间验证一律不通过",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = windowStartText,
+                                onValueChange = { windowStartText = it },
+                                label = { Text("开始") },
+                                placeholder = { Text("22:00") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            OutlinedTextField(
+                                value = windowEndText,
+                                onValueChange = { windowEndText = it },
+                                label = { Text("结束") },
+                                placeholder = { Text("07:00") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = {
+                                val s = parseHm(windowStartText)
+                                val e = parseHm(windowEndText)
+                                if (s == null || e == null) {
+                                    AppStore.toast("时间格式应为 HH:mm，如 22:00")
+                                } else {
+                                    requireVerify {
+                                        windowEnabled = true
+                                        VerifyGate.saveUnlockWindow(ctx, true, s, e)
+                                        AppStore.toast("解锁时间范围已保存")
+                                    }
+                                }
+                            }) { Text("保存") }
+                        }
+                        TextButton(onClick = {
+                            requireVerify {
+                                windowEnabled = false
+                                VerifyGate.saveUnlockWindow(ctx, false, VerifyGate.unlockWindowStart(ctx), VerifyGate.unlockWindowEnd(ctx))
+                            }
+                        }) { Text("关闭时间范围限制") }
+                    }
+                }
+
                 Spacer(Modifier.height(16.dp))
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp)) {
@@ -281,6 +346,7 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
             requirement = VerifyGate.bulkRequirement(ctx, AppStore.rules),
             title = "修改验证",
             hint = "验证开启期间，削弱性修改需当场通过最强验证",
+            enforceWindow = false,
             onConfirmed = {
                 pendingAction = null
                 action()

@@ -22,6 +22,8 @@ data class LockRule(
     val quizCount: Int? = null,
     /** 每日使用限额（分钟），null=不限额。按 App（包名）生效，同一包取最大值。 */
     val quotaMin: Int? = null,
+    /** 锁定有效期（epoch 毫秒）：到期后该规则自动失效（无需手动解锁）。0=不自动到期。 */
+    val lockUntil: Long = 0,
     val createdAt: Long = System.currentTimeMillis(),
 )
 
@@ -104,6 +106,16 @@ class RuleStore(filesDir: File) {
                 verifyDelaySec = if (validMode == VerifyGate.METHOD_DELAY) delaySec?.coerceIn(5, 3600) else null,
                 verifyPassword = if (validMode == VerifyGate.METHOD_PASSWORD) password?.trim()?.takeIf { s -> s.isNotBlank() } else null,
                 quizCount = if (validMode == VerifyGate.METHOD_QUIZ) quizCount?.coerceIn(1, 10) else null,
+            ) else it
+        }
+        save()
+    }
+
+    /** 设置单条规则的锁定有效期（epoch 毫秒）。0=不自动到期。 */
+    fun updateLockUntil(pkg: String, cls: String, untilMs: Long) {
+        _rules.value = _rules.value.map {
+            if (it.packageName == pkg && it.activityName == cls) it.copy(
+                lockUntil = if (untilMs > 0) untilMs else 0
             ) else it
         }
         save()

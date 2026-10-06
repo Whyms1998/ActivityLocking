@@ -127,6 +127,13 @@ object AppStore {
         rules = ruleStore.rules
     }
 
+    /** 锁定有效期（到期自动解锁），untilMs=0 表示清除。 */
+    fun updateLockUntil(pkg: String, cls: String, untilMs: Long) {
+        if (!::ruleStore.isInitialized) return
+        ruleStore.updateLockUntil(pkg, cls, untilMs)
+        rules = ruleStore.rules
+    }
+
     fun updateLocked(pkg: String, cls: String, locked: Boolean) {
         ruleStore.updateLocked(pkg, cls, locked)
         rules = ruleStore.rules

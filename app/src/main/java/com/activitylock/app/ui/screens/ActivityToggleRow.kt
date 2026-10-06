@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -92,7 +93,7 @@ fun ActivityToggleRow(
         else -> "密码"
     }
 
-    fun doApply(wantLock: Boolean, redirectUri: String?, vMode: String?, vDelay: Int?, vPwd: String?, vQuizCount: Int?) {
+    fun doApply(wantLock: Boolean, redirectUri: String?, vMode: String?, vDelay: Int?, vPwd: String?, vQuizCount: Int?, lockUntil: Long = 0L) {
         busy = true
         scope.launch {
             val o = LockEngine.apply(packageName, cls, wantLock, redirectUri)
@@ -115,8 +116,9 @@ fun ActivityToggleRow(
                 if (!locked) mode = "pm"
                 AppStore.toast("操作失败：${o.detail}")
             }
-            // 解锁条件随锁定一并保存（解锁/解锁失败时也保持一致）
+            // 解锁条件随锁定一并保存（解锁/解锁失败时也保持一致）；解锁时清除到期时间
             AppStore.updateVerify(packageName, cls, vMode, vDelay, vPwd, vQuizCount)
+            AppStore.updateLockUntil(packageName, cls, if (wantLock) lockUntil else 0L)
             busy = false
         }
     }
@@ -176,7 +178,7 @@ fun ActivityToggleRow(
                     if (wantLock && !locked) {
                         confirmLock = true
                     } else {
-                        doApply(wantLock, null, null, null, null, null)
+                        doApply(wantLock, null, null, null, null, null, 0L)
                     }
                 }
             )
@@ -191,9 +193,9 @@ fun ActivityToggleRow(
             vDelayInit = vDelay.trim().toIntOrNull(),
             vPwdInit = vPwd,
             vQuizCountInit = vQuizCount.trim().toIntOrNull(),
-            onConfirm = { redirectUri, vm, vd, vp, vqc, rd ->
+            onConfirm = { redirectUri, vm, vd, vp, vqc, rd, lu ->
                 confirmLock = false
-                doApply(true, redirectUri, vm, vd, vp, vqc)
+                doApply(true, redirectUri, vm, vd, vp, vqc, lu)
                 if (vm == VerifyGate.METHOD_RANDOM && rd > 0) {
                     VerifyGate.setRandomDigits(context, rd)
                 }
@@ -253,7 +255,7 @@ private fun LockLauncherDialog(
     vDelayInit: Int?,
     vPwdInit: String?,
     vQuizCountInit: Int?,
-    onConfirm: (String?, String?, Int?, String?, Int?, Int) -> Unit,
+    onConfirm: (String?, String?, Int?, String?, Int?, Int, Long) -> Unit,
     onTest: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -271,6 +273,29 @@ private fun LockLauncherDialog(
     var vPwd by remember { mutableStateOf(vPwdInit ?: "") }
     var vQuizCount by remember { mutableStateOf((vQuizCountInit ?: VerifyGate.quizCount(context)).toString()) }
     var vRandomDigits by remember { mutableStateOf(VerifyGate.randomDigits(context).toString()) }
+    // 到期自动解锁：0=不自动；-1=明天 8 点；其余=当前时刻+时长
+    val untilOptions = remember {
+        listOf(0L to "不自动", 3600_000L to "1 小时", 6L * 3600_000L to "6 小时",
+            3L * 86_400_000L to "3 天", 7L * 86_400_000L to "7 天", -1L to "明天8点")
+    }
+    var untilChoice by remember { mutableStateOf(0L) }
+    val untilMs: Long = when {
+        untilChoice == -1L -> {
+            val cal = java.util.Calendar.getInstance()
+            cal.add(java.util.Calendar.DAY_OF_MONTH, 1)
+            cal.set(java.util.Calendar.HOUR_OF_DAY, 8)
+            cal.set(java.util.Calendar.MINUTE, 0)
+            cal.set(java.util.Calendar.SECOND, 0)
+            cal.set(java.util.Calendar.MILLISECOND, 0)
+            cal.timeInMillis
+        }
+        untilChoice <= 0L -> 0L
+        else -> System.currentTimeMillis() + untilChoice
+    }
+    val untilDesc: String? = if (untilMs > 0)
+        "锁定至 " + java.text.SimpleDateFormat("M月d日 HH:mm", java.util.Locale.CHINA)
+            .format(java.util.Date(untilMs)) + "，到期自动解除"
+    else null
     val globalReq = VerifyGate.globalRequirement(context)
     val globalDesc = when (globalReq.mode) {
         VerifyGate.MODE_NONE -> "已关闭"
@@ -359,6 +384,30 @@ private fun LockLauncherDialog(
                     onQuizCountChange = { vQuizCount = it.toString() },
                     onRandomDigitsChange = { vRandomDigits = it.toString() },
                 )
+                Spacer(Modifier.height(12.dp))
+                Text("到期自动解锁", style = MaterialTheme.typography.titleSmall)
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                ) {
+                    untilOptions.forEach { (optMs, optLabel) ->
+                        FilterChip(
+                            selected = untilChoice == optMs,
+                            onClick = { untilChoice = optMs },
+                            label = { Text(optLabel) }
+                        )
+                        Spacer(Modifier.width(4.dp))
+                    }
+                }
+                untilDesc?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
             }
         },
         confirmButton = {
@@ -369,7 +418,8 @@ private fun LockLauncherDialog(
                     vDelay.trim().toIntOrNull(),
                     vPwd,
                     vQuizCount.trim().toIntOrNull(),
-                    vRandomDigits.trim().toIntOrNull() ?: 6
+                    vRandomDigits.trim().toIntOrNull() ?: 6,
+                    untilMs
                 )
             }) { Text("锁定") }
         },
