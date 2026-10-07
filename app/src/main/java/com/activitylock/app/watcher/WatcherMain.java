@@ -49,10 +49,16 @@ public class WatcherMain {
     static final ConcurrentHashMap<String, long[]> SESSION_JUMPS = new ConcurrentHashMap<>();    // {当日次数, 天纪元}
     static final ConcurrentHashMap<String, long[]> SESSION_EXHAUSTED = new ConcurrentHashMap<>(); // {1, 天纪元} 当日已收走
     static final ConcurrentHashMap<String, Integer> SESSION_MAXJ = new ConcurrentHashMap<>();     // 当日第 N 次后锁定，0=不启用
+    static final ConcurrentHashMap<String, Integer> SESSION_GRACE = new ConcurrentHashMap<>();    // 离开宽限期（秒），可配
     static final ConcurrentHashMap<String, String> SESSION_MODE = new ConcurrentHashMap<>();      // jump=跳转 / lock=直接锁定
-    static final long SESSION_GAP_MS = 90_000L;      // 前台事件间隔超过此值视为离开过
-    static final long SESSION_GRACE_MS = 120_000L;   // 离开宽限期：2 分钟内切回接着算，防止回个消息就重置
+    static final long SESSION_GAP_MS = 10_000L;      // 前台事件间隔超过此值判定为"离开过"（tick 每 2s，精度足够）
     static final long JUMP_COOLDOWN_MS = 5 * 60_000L; // 跳转后冷静期：切回立即再送
+
+    /** 离开宽限期（秒）：切出其他 App 后在此时间内回来会接着算，超时重新计时。 */
+    static long graceSec(String pkg) {
+        Integer g = SESSION_GRACE.get(pkg);
+        return g == null ? 120L : g.longValue();
+    }
     /** 全局豁免截止时间（epoch ms）：临时解锁期间放行所有启动，0=无。 */
     static volatile long GLOBAL_EXEMPT_UNTIL = 0;
     /** 按天拦截计数（ISO 日期 -> 次数），供周报趋势。 */
@@ -323,6 +329,7 @@ public class WatcherMain {
             ConcurrentHashMap<String, long[]> nextSess = new ConcurrentHashMap<>();
             ConcurrentHashMap<String, String> nextSessT = new ConcurrentHashMap<>();
             ConcurrentHashMap<String, Integer> nextSessN = new ConcurrentHashMap<>();
+            ConcurrentHashMap<String, Integer> nextSessG = new ConcurrentHashMap<>();
             ConcurrentHashMap<String, String> nextSessM = new ConcurrentHashMap<>();
             for (int i = 0; i < arr.length(); i++) {
                 Object el = arr.get(i);
@@ -346,6 +353,7 @@ public class WatcherMain {
                         nextSessT.put(sp, o.optString("t", ""));
                         nextSessN.put(sp, o.optInt("n", 3));
                         nextSessM.put(sp, o.optString("m", "jump"));
+                        nextSessG.put(sp, o.optInt("g", 120));
                     }
                     // 全局临时豁免：{"g":1,"u":到期毫秒}，过期即视为无豁免
                     if (o.optInt("g", 0) == 1) {
@@ -368,6 +376,8 @@ public class WatcherMain {
             SESSION_TARGET.putAll(nextSessT);
             SESSION_MAXJ.clear();
             SESSION_MAXJ.putAll(nextSessN);
+            SESSION_GRACE.clear();
+            SESSION_GRACE.putAll(nextSessG);
             SESSION_MODE.clear();
             SESSION_MODE.putAll(nextSessM);
             // 规则被删除/关闭的包，清掉它的当日计数与收走状态（app 里关开关即可解除锁定）
@@ -403,18 +413,18 @@ public class WatcherMain {
                 Long acc = SESSION_ACC.get(pkg);
                 long base = acc == null ? 0 : acc;
                 if (delta >= 0 && delta < SESSION_GAP_MS) {
-                    SESSION_ACC.put(pkg, base + delta);
-                } else if (delta <= SESSION_GRACE_MS) {
-                    // 短暂无事件（息屏/回消息）：保留累计，不把离开时间计入
+                    SESSION_ACC.put(pkg, base + delta); // 连续在场
+                } else if (delta <= graceSec(pkg) * 1000L) {
+                    // 离开但在宽限期内（息屏/回消息）：保留累计，不把离开时间计入
                 } else {
-                    SESSION_ACC.put(pkg, 0L); // 离开过久，重新计
+                    SESSION_ACC.put(pkg, 0L); // 离开超过宽限期，重新计
                 }
             } else {
                 String curPkg = CUR_PKG;
                 if (curPkg != null) SESSION_LEAVE.put(curPkg, now);
                 Long leave = SESSION_LEAVE.get(pkg);
                 Long acc = SESSION_ACC.get(pkg);
-                boolean withinGrace = leave != null && (now - leave) <= SESSION_GRACE_MS;
+                boolean withinGrace = leave != null && (now - leave) <= graceSec(pkg) * 1000L;
                 if (!withinGrace || acc == null) {
                     SESSION_ACC.put(pkg, 0L); // 刚进入，或离开超过宽限期：从零开始
                 } // 宽限期内切回：保留累计，接着算

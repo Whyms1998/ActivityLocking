@@ -15,6 +15,8 @@ data class SessionCfg(
     val limitMin: Int = 1,
     /** 当日第 N 次跳转后锁定该 App（0=不启用，次日自动恢复）。 */
     val maxJumps: Int = 3,
+    /** 离开宽限期（秒）：切出其他 App 后在此时间内回来接着算，超时重新计时。 */
+    val graceSec: Int = 120,
     /** jump=到点跳转（软引导）；lock=连续刷满直接当日锁定（打不开，次日恢复）。 */
     val mode: String = "jump",
     val enabled: Boolean = true,

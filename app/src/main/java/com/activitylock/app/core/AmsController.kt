@@ -77,6 +77,7 @@ object AmsController {
                         .put("s", c.limitMin * 60)
                         .put("t", resolved)
                         .put("n", c.maxJumps)
+                        .put("g", c.graceSec)
                         .put("m", c.mode)
                 )
             }

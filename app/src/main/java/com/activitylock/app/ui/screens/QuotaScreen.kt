@@ -138,7 +138,8 @@ fun QuotaScreen(onBack: () -> Unit) {
                             Text("到点跳转", style = MaterialTheme.typography.titleSmall)
                             Text(
                                 "打开触发 App 连续满 N 分钟，自动打开学习 App。\n" +
-                                    "切去其他 App 在 2 分钟内回来会接着算（回消息不受影响），超过 2 分钟才重新计时。",
+                                    "切去其他 App 在宽限时间内回来会接着算（回消息不受影响），超过才重新计时；" +
+                                    "宽限时间在新增规则时自定义（精确到秒）。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -165,11 +166,12 @@ fun QuotaScreen(onBack: () -> Unit) {
                             Text(
                                 if (c.mode == "lock") {
                                     "打开「" + (AppStore.findApp(c.pkg)?.label ?: c.pkg.substringAfterLast('.')) +
-                                        "」连续 " + c.limitMin + " 分钟 → 当日锁定（次日恢复）"
+                                        "」连续 " + c.limitMin + " 分钟 → 当日锁定（次日恢复）" + graceSuffix(c.graceSec)
                                 } else {
                                     "打开「" + (AppStore.findApp(c.pkg)?.label ?: c.pkg.substringAfterLast('.')) +
                                         "」" + c.limitMin + " 分钟后自动打开「" + sessionTargetLabel(c.target) + "」" +
-                                        if (c.maxJumps > 0) "· 当日 " + c.maxJumps + " 次后锁定" else ""
+                                        (if (c.maxJumps > 0) "· 当日 " + c.maxJumps + " 次后锁定" else "") +
+                                        graceSuffix(c.graceSec)
                                 },
                                 style = MaterialTheme.typography.labelMedium,
                                 modifier = Modifier.weight(1f)
@@ -263,11 +265,11 @@ fun QuotaScreen(onBack: () -> Unit) {
 
     if (addingSession) {
         SessionAddDialog(
-            onConfirm = { trigger, target, min, maxJ, mode ->
+            onConfirm = { trigger, target, min, maxJ, mode, grace ->
                 AppStore.upsertSession(
                     SessionCfg(
                         pkg = trigger, target = target, limitMin = min,
-                        maxJumps = maxJ, mode = mode
+                        maxJumps = maxJ, mode = mode, graceSec = grace
                     )
                 )
                 refresh(context)
@@ -366,6 +368,9 @@ private fun QuotaAddDialog(
     )
 }
 
+private fun graceSuffix(sec: Int): String =
+    if (sec == 120) "" else "· 宽限 " + sec + " 秒"
+
 private fun sessionTargetLabel(target: String): String {
     val t = target.trim()
     return when {
@@ -379,7 +384,7 @@ private fun sessionTargetLabel(target: String): String {
 
 @Composable
 private fun SessionAddDialog(
-    onConfirm: (String, String, Int, Int, String) -> Unit,
+    onConfirm: (String, String, Int, Int, String, Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var query1 by remember { mutableStateOf("") }
@@ -387,6 +392,7 @@ private fun SessionAddDialog(
     var trigger by remember { mutableStateOf<String?>(null) }
     var target by remember { mutableStateOf<String?>(null) }
     var minutes by remember { mutableStateOf("1") }
+    var graceText by remember { mutableStateOf("120") }
     var maxJumps by remember { mutableStateOf(3) }
     var customJumps by remember { mutableStateOf(false) }
     var showCustomJumpsDialog by remember { mutableStateOf(false) }
@@ -453,6 +459,15 @@ private fun SessionAddDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = graceText,
+                    onValueChange = { graceText = it.filter { c -> c.isDigit() }.take(4) },
+                    label = { Text("离开宽限期（秒）") },
+                    placeholder = { Text("切出后在此时间内回来接着算，默认 120") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
                 if (mode == "jump") {
                     Spacer(Modifier.height(8.dp))
                     Text("当日第 N 次跳转后锁定该 App（次日恢复）", style = MaterialTheme.typography.labelMedium)
@@ -496,8 +511,14 @@ private fun SessionAddDialog(
         confirmButton = {
             TextButton(
                 enabled = trigger != null && (mode == "lock" || target != null) &&
-                    (minutes.toIntOrNull() ?: 0) in 1..240 && maxJumps in 0..99,
-                onClick = { onConfirm(trigger!!, target ?: "", minutes.toInt(), maxJumps, mode) }
+                    (minutes.toIntOrNull() ?: 0) in 1..240 && maxJumps in 0..99 &&
+                    (graceText.toIntOrNull() ?: -1) in 0..3600,
+                onClick = {
+                    onConfirm(
+                        trigger!!, target ?: "", minutes.toInt(),
+                        maxJumps, mode, graceText.toInt()
+                    )
+                }
             ) { Text("保存") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
