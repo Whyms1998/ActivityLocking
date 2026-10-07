@@ -694,7 +694,7 @@ fun FavoritesScreen(
             onDismissRequest = { editing = null },
             title = { Text("编辑界面") },
             text = {
-                Column {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
                     Text(rule.activityName, style = MaterialTheme.typography.bodySmall)
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
