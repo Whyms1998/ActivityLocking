@@ -16,7 +16,9 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -69,6 +71,29 @@ fun AppsScreen(onOpenDetail: (String) -> Unit) {
                 CircularProgressIndicator()
                 Spacer(Modifier.height(8.dp))
                 Text("正在建立应用索引…", style = MaterialTheme.typography.bodyMedium)
+            }
+            return@Column
+        }
+
+        if (apps.isEmpty()) {
+            // 重试后仍为空：MIUI 偶发限制应用列表读取，给手动重试入口
+            LaunchedEffect(Unit) {
+                if (AppStore.appsLoadFailed) return@LaunchedEffect
+                AppStore.reloadApps() // 进入本页时若上次没读到，自动再试一次
+            }
+            Column(
+                Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center
+            ) {
+                Text(
+                    if (AppStore.appsLoadFailed) "应用列表读取失败\n（系统偶发限制，点重试再试一次）"
+                    else "暂无应用",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(12.dp))
+                TextButton(onClick = { AppStore.reloadApps() }) { Text("重试") }
             }
             return@Column
         }

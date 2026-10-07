@@ -22,6 +22,10 @@ object AppStore {
     var appsLoading by mutableStateOf(true)
         private set
 
+    /** 应用列表重试后仍为空（MIUI 偶发限制/Binder 竞态），展示手动重试入口。 */
+    var appsLoadFailed by mutableStateOf(false)
+        private set
+
     var history by mutableStateOf<List<HistoryEntry>>(emptyList())
         private set
 
@@ -75,10 +79,20 @@ object AppStore {
 
     fun reloadApps() {
         appsLoading = true
+        appsLoadFailed = false
         scope.launch {
-            val list = withContext(Dispatchers.IO) { PmRepository.loadApps(appContext) }
+            var list = emptyList<AppEntry>()
+            // MIUI 偶发读不到应用列表（权限抖动/Binder 竞态），指数退避重试
+            for (attempt in 1..4) {
+                list = withContext(Dispatchers.IO) {
+                    runCatching { PmRepository.loadApps(appContext) }.getOrDefault(emptyList())
+                }
+                if (list.isNotEmpty()) break
+                kotlinx.coroutines.delay(600L * attempt)
+            }
             apps = list
             appsLoading = false
+            appsLoadFailed = list.isEmpty()
         }
     }
 

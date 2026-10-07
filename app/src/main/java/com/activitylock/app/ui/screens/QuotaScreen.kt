@@ -386,7 +386,12 @@ private fun SessionAddDialog(
     var target by remember { mutableStateOf<String?>(null) }
     var minutes by remember { mutableStateOf("1") }
     var maxJumps by remember { mutableStateOf(3) }
+    var customJumps by remember { mutableStateOf(false) }
+    var customJumpsText by remember { mutableStateOf("") }
     var mode by remember { mutableStateOf("jump") }
+
+    val effectiveMaxJumps: Int =
+        if (customJumps) (customJumpsText.toIntOrNull() ?: 0).coerceIn(1, 99) else maxJumps
 
     fun candidates(q: String, exclude: String?): List<AppEntry> =
         AppStore.apps
@@ -453,14 +458,34 @@ private fun SessionAddDialog(
                     Text("当日第 N 次跳转后锁定该 App（次日恢复）", style = MaterialTheme.typography.labelMedium)
                     Spacer(Modifier.height(4.dp))
                     Row {
-                        listOf(0 to "不锁定", 2 to "2 次", 3 to "3 次", 5 to "5 次").forEach { (n, label) ->
+                        listOf(0 to "不锁定", 1 to "1 次", 3 to "3 次").forEach { (n, label) ->
                             FilterChip(
-                                selected = maxJumps == n,
-                                onClick = { maxJumps = n },
+                                selected = !customJumps && maxJumps == n,
+                                onClick = {
+                                    maxJumps = n
+                                    customJumps = false
+                                },
                                 label = { Text(label) }
                             )
                             Spacer(Modifier.width(4.dp))
                         }
+                        FilterChip(
+                            selected = customJumps,
+                            onClick = {
+                                customJumps = true
+                                if (customJumpsText.isBlank()) customJumpsText = "2"
+                            },
+                            label = { Text("自定义") }
+                        )
+                    }
+                    if (customJumps) {
+                        OutlinedTextField(
+                            value = customJumpsText,
+                            onValueChange = { customJumpsText = it.filter { c -> c.isDigit() }.take(2) },
+                            label = { Text("自定义次数（1-99）") },
+                            singleLine = true,
+                            modifier = Modifier.width(160.dp)
+                        )
                     }
                 } else {
                     Spacer(Modifier.height(4.dp))
@@ -475,8 +500,8 @@ private fun SessionAddDialog(
         confirmButton = {
             TextButton(
                 enabled = trigger != null && (mode == "lock" || target != null) &&
-                    (minutes.toIntOrNull() ?: 0) in 1..240,
-                onClick = { onConfirm(trigger!!, target ?: "", minutes.toInt(), maxJumps, mode) }
+                    (minutes.toIntOrNull() ?: 0) in 1..240 && effectiveMaxJumps in 0..99,
+                onClick = { onConfirm(trigger!!, target ?: "", minutes.toInt(), effectiveMaxJumps, mode) }
             ) { Text("保存") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
