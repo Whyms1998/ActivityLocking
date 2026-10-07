@@ -412,7 +412,8 @@ private fun SessionAddDialog(
         onDismissRequest = onDismiss,
         title = { Text("新增到点跳转") },
         text = {
-            Column {
+            // 内容整体可滚动（PickerList 内部自带滚动，超出屏幕的部分靠这里拖动）
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text("刷满后怎么处理", style = MaterialTheme.typography.labelMedium)
                 Row {
                     FilterChip(
