@@ -48,6 +48,7 @@ public class WatcherMain {
     static final ConcurrentHashMap<String, long[]> SESSION_JUMPS = new ConcurrentHashMap<>();    // {当日次数, 天纪元}
     static final ConcurrentHashMap<String, long[]> SESSION_EXHAUSTED = new ConcurrentHashMap<>(); // {1, 天纪元} 当日已收走
     static final ConcurrentHashMap<String, Integer> SESSION_MAXJ = new ConcurrentHashMap<>();     // 当日第 N 次后锁定，0=不启用
+    static final ConcurrentHashMap<String, String> SESSION_MODE = new ConcurrentHashMap<>();      // jump=跳转 / lock=直接锁定
     static final long SESSION_GAP_MS = 90_000L;      // 前台事件间隔超过此值视为离开过
     static final long JUMP_COOLDOWN_MS = 5 * 60_000L; // 跳转后冷静期：切回立即再送
     /** 全局豁免截止时间（epoch ms）：临时解锁期间放行所有启动，0=无。 */
@@ -320,6 +321,7 @@ public class WatcherMain {
             ConcurrentHashMap<String, long[]> nextSess = new ConcurrentHashMap<>();
             ConcurrentHashMap<String, String> nextSessT = new ConcurrentHashMap<>();
             ConcurrentHashMap<String, Integer> nextSessN = new ConcurrentHashMap<>();
+            ConcurrentHashMap<String, String> nextSessM = new ConcurrentHashMap<>();
             for (int i = 0; i < arr.length(); i++) {
                 Object el = arr.get(i);
                 if (el instanceof org.json.JSONObject) {
@@ -341,6 +343,7 @@ public class WatcherMain {
                         nextSess.put(sp, new long[]{o.optLong("s", 0) * 1000L});
                         nextSessT.put(sp, o.optString("t", ""));
                         nextSessN.put(sp, o.optInt("n", 3));
+                        nextSessM.put(sp, o.optString("m", "jump"));
                     }
                     // 全局临时豁免：{"g":1,"u":到期毫秒}，过期即视为无豁免
                     if (o.optInt("g", 0) == 1) {
@@ -363,6 +366,8 @@ public class WatcherMain {
             SESSION_TARGET.putAll(nextSessT);
             SESSION_MAXJ.clear();
             SESSION_MAXJ.putAll(nextSessN);
+            SESSION_MODE.clear();
+            SESSION_MODE.putAll(nextSessM);
             // 规则被删除/关闭的包，清掉它的当日计数与收走状态（app 里关开关即可解除锁定）
             for (String k : SESSION_JUMPS.keySet()) {
                 if (!nextSess.containsKey(k)) SESSION_JUMPS.remove(k);
@@ -426,10 +431,18 @@ public class WatcherMain {
             long now = android.os.SystemClock.elapsedRealtime();
             Long lj = SESSION_LASTJUMP.get(pkg);
             if (lj != null && now - lj < JUMP_COOLDOWN_MS) return;
-            String target = SESSION_TARGET.get(pkg);
-            if (target == null || target.isEmpty()) return;
             SESSION_ACC.put(pkg, 0L);
             SESSION_LASTJUMP.put(pkg, now);
+            // 直接锁定模式：连续刷满即当日收走，不跳转（必须在目标检查之前，lock 无 target）
+            String mode = SESSION_MODE.get(pkg);
+            if ("lock".equals(mode)) {
+                long todayL = System.currentTimeMillis() / 86_400_000L;
+                SESSION_EXHAUSTED.put(pkg, new long[]{1, todayL});
+                log("SESSION-LOCK " + pkg + " acc=" + (acc / 1000) + "s -> locked for today");
+                return;
+            }
+            String target = SESSION_TARGET.get(pkg);
+            if (target == null || target.isEmpty()) return;
             // 当日跳转次数 + 升级判定：第 N 次后当日收走（次日自动恢复）
             long today = System.currentTimeMillis() / 86_400_000L;
             long[] jc = SESSION_JUMPS.get(pkg);

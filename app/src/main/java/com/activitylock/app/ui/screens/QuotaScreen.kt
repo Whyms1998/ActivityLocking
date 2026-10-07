@@ -149,17 +149,26 @@ fun QuotaScreen(onBack: () -> Unit) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             AppIcon(c.pkg, 30.dp)
-                            Text("  →  ", style = MaterialTheme.typography.labelMedium)
-                            if (c.target.contains("://")) {
-                                Text("\uD83D\uDD17", style = MaterialTheme.typography.titleMedium)
+                            if (c.mode == "lock") {
+                                Text("  →  🔒", style = MaterialTheme.typography.labelMedium)
                             } else {
-                                AppIcon(c.target.substringBefore('/'), 30.dp)
+                                Text("  →  ", style = MaterialTheme.typography.labelMedium)
+                                if (c.target.contains("://")) {
+                                    Text("\uD83D\uDD17", style = MaterialTheme.typography.titleMedium)
+                                } else {
+                                    AppIcon(c.target.substringBefore('/'), 30.dp)
+                                }
                             }
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                "打开「" + (AppStore.findApp(c.pkg)?.label ?: c.pkg.substringAfterLast('.')) +
-                                    "」" + c.limitMin + " 分钟后自动打开「" + sessionTargetLabel(c.target) + "」" +
-                                    if (c.maxJumps > 0) "· 当日 " + c.maxJumps + " 次后锁定" else "",
+                                if (c.mode == "lock") {
+                                    "打开「" + (AppStore.findApp(c.pkg)?.label ?: c.pkg.substringAfterLast('.')) +
+                                        "」连续 " + c.limitMin + " 分钟 → 当日锁定（次日恢复）"
+                                } else {
+                                    "打开「" + (AppStore.findApp(c.pkg)?.label ?: c.pkg.substringAfterLast('.')) +
+                                        "」" + c.limitMin + " 分钟后自动打开「" + sessionTargetLabel(c.target) + "」" +
+                                        if (c.maxJumps > 0) "· 当日 " + c.maxJumps + " 次后锁定" else ""
+                                },
                                 style = MaterialTheme.typography.labelMedium,
                                 modifier = Modifier.weight(1f)
                             )
@@ -252,9 +261,12 @@ fun QuotaScreen(onBack: () -> Unit) {
 
     if (addingSession) {
         SessionAddDialog(
-            onConfirm = { trigger, target, min, maxJ ->
+            onConfirm = { trigger, target, min, maxJ, mode ->
                 AppStore.upsertSession(
-                    SessionCfg(pkg = trigger, target = target, limitMin = min, maxJumps = maxJ)
+                    SessionCfg(
+                        pkg = trigger, target = target, limitMin = min,
+                        maxJumps = maxJ, mode = mode
+                    )
                 )
                 refresh(context)
                 addingSession = false
@@ -365,7 +377,7 @@ private fun sessionTargetLabel(target: String): String {
 
 @Composable
 private fun SessionAddDialog(
-    onConfirm: (String, String, Int, Int) -> Unit,
+    onConfirm: (String, String, Int, Int, String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var query1 by remember { mutableStateOf("") }
@@ -374,6 +386,7 @@ private fun SessionAddDialog(
     var target by remember { mutableStateOf<String?>(null) }
     var minutes by remember { mutableStateOf("1") }
     var maxJumps by remember { mutableStateOf(3) }
+    var mode by remember { mutableStateOf("jump") }
 
     fun candidates(q: String, exclude: String?): List<AppEntry> =
         AppStore.apps
@@ -389,6 +402,21 @@ private fun SessionAddDialog(
         title = { Text("新增到点跳转") },
         text = {
             Column {
+                Text("刷满后怎么处理", style = MaterialTheme.typography.labelMedium)
+                Row {
+                    FilterChip(
+                        selected = mode == "jump",
+                        onClick = { mode = "jump" },
+                        label = { Text("跳去学习 App") }
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    FilterChip(
+                        selected = mode == "lock",
+                        onClick = { mode = "lock" },
+                        label = { Text("直接锁定") }
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
                 Text("触发 App（要限制刷的）", style = MaterialTheme.typography.labelMedium)
                 Spacer(Modifier.height(4.dp))
                 OutlinedTextField(
@@ -399,17 +427,19 @@ private fun SessionAddDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 PickerList(candidates(query1, target), trigger) { trigger = it }
-                Spacer(Modifier.height(8.dp))
-                Text("跳转目标（学习去向）", style = MaterialTheme.typography.labelMedium)
-                Spacer(Modifier.height(4.dp))
-                OutlinedTextField(
-                    value = query2,
-                    onValueChange = { query2 = it },
-                    placeholder = { Text("搜索 App") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                PickerList(candidates(query2, trigger), target) { target = it }
+                if (mode == "jump") {
+                    Spacer(Modifier.height(8.dp))
+                    Text("跳转目标（学习去向）", style = MaterialTheme.typography.labelMedium)
+                    Spacer(Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = query2,
+                        onValueChange = { query2 = it },
+                        placeholder = { Text("搜索 App") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    PickerList(candidates(query2, trigger), target) { target = it }
+                }
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = minutes,
@@ -418,26 +448,35 @@ private fun SessionAddDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(Modifier.height(8.dp))
-                Text("当日第 N 次跳转后锁定该 App（次日恢复）", style = MaterialTheme.typography.labelMedium)
-                Spacer(Modifier.height(4.dp))
-                Row {
-                    listOf(0 to "不锁定", 2 to "2 次", 3 to "3 次", 5 to "5 次").forEach { (n, label) ->
-                        FilterChip(
-                            selected = maxJumps == n,
-                            onClick = { maxJumps = n },
-                            label = { Text(label) }
-                        )
-                        Spacer(Modifier.width(4.dp))
+                if (mode == "jump") {
+                    Spacer(Modifier.height(8.dp))
+                    Text("当日第 N 次跳转后锁定该 App（次日恢复）", style = MaterialTheme.typography.labelMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Row {
+                        listOf(0 to "不锁定", 2 to "2 次", 3 to "3 次", 5 to "5 次").forEach { (n, label) ->
+                            FilterChip(
+                                selected = maxJumps == n,
+                                onClick = { maxJumps = n },
+                                label = { Text(label) }
+                            )
+                            Spacer(Modifier.width(4.dp))
+                        }
                     }
+                } else {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "锁定后当日无法打开，次日 0 点恢复；也可在 app 内通过验证后关闭本规则提前解锁。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         },
         confirmButton = {
             TextButton(
-                enabled = trigger != null && target != null &&
+                enabled = trigger != null && (mode == "lock" || target != null) &&
                     (minutes.toIntOrNull() ?: 0) in 1..240,
-                onClick = { onConfirm(trigger!!, target!!, minutes.toInt(), maxJumps) }
+                onClick = { onConfirm(trigger!!, target ?: "", minutes.toInt(), maxJumps, mode) }
             ) { Text("保存") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }

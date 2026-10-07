@@ -10,11 +10,13 @@ data class SessionCfg(
     /** 触发 App：连续使用达到时限后跳走。 */
     val pkg: String,
     /** 跳转目标 App：包名（启动其主界面），由 App 侧解析成组件名后下发给 Watcher。 */
-    val target: String,
+    val target: String = "",
     /** 连续使用多少分钟后触发。 */
     val limitMin: Int = 1,
     /** 当日第 N 次跳转后锁定该 App（0=不启用，次日自动恢复）。 */
     val maxJumps: Int = 3,
+    /** jump=到点跳转（软引导）；lock=连续刷满直接当日锁定（打不开，次日恢复）。 */
+    val mode: String = "jump",
     val enabled: Boolean = true,
 )
 

@@ -69,13 +69,15 @@ object AmsController {
             // 已超额/专注中的包跳过（它们有更严的整包拦截，无需软引导）
             for (c in AppStore.sessionCfgs) {
                 if (!c.enabled || c.pkg in over || c.pkg in focus) continue
-                val resolved = resolveSessionTarget(c.target) ?: continue
+                // lock 模式纯锁定无跳转：t 留空也要下发
+                val resolved = if (c.mode == "lock") "" else resolveSessionTarget(c.target) ?: continue
                 arr.put(
                     org.json.JSONObject()
                         .put("f", c.pkg)
                         .put("s", c.limitMin * 60)
                         .put("t", resolved)
                         .put("n", c.maxJumps)
+                        .put("m", c.mode)
                 )
             }
             // 临时解锁层：全局豁免（锁定强度开启"计划窗口内禁用"时不激活）
