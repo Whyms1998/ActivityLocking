@@ -387,11 +387,9 @@ private fun SessionAddDialog(
     var minutes by remember { mutableStateOf("1") }
     var maxJumps by remember { mutableStateOf(3) }
     var customJumps by remember { mutableStateOf(false) }
+    var showCustomJumpsDialog by remember { mutableStateOf(false) }
     var customJumpsText by remember { mutableStateOf("") }
     var mode by remember { mutableStateOf("jump") }
-
-    val effectiveMaxJumps: Int =
-        if (customJumps) (customJumpsText.toIntOrNull() ?: 0).coerceIn(1, 99) else maxJumps
 
     fun candidates(q: String, exclude: String?): List<AppEntry> =
         AppStore.apps
@@ -472,19 +470,12 @@ private fun SessionAddDialog(
                         FilterChip(
                             selected = customJumps,
                             onClick = {
-                                customJumps = true
-                                if (customJumpsText.isBlank()) customJumpsText = "2"
+                                customJumpsText = if (customJumps) maxJumps.toString() else ""
+                                showCustomJumpsDialog = true
                             },
-                            label = { Text("自定义") }
-                        )
-                    }
-                    if (customJumps) {
-                        OutlinedTextField(
-                            value = customJumpsText,
-                            onValueChange = { customJumpsText = it.filter { c -> c.isDigit() }.take(2) },
-                            label = { Text("自定义次数（1-99）") },
-                            singleLine = true,
-                            modifier = Modifier.width(160.dp)
+                            label = {
+                                Text(if (customJumps) "自定义 " + maxJumps + " 次" else "自定义")
+                            }
                         )
                     }
                 } else {
@@ -500,12 +491,51 @@ private fun SessionAddDialog(
         confirmButton = {
             TextButton(
                 enabled = trigger != null && (mode == "lock" || target != null) &&
-                    (minutes.toIntOrNull() ?: 0) in 1..240 && effectiveMaxJumps in 0..99,
-                onClick = { onConfirm(trigger!!, target ?: "", minutes.toInt(), effectiveMaxJumps, mode) }
+                    (minutes.toIntOrNull() ?: 0) in 1..240 && maxJumps in 0..99,
+                onClick = { onConfirm(trigger!!, target ?: "", minutes.toInt(), maxJumps, mode) }
             ) { Text("保存") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )
+    if (showCustomJumpsDialog) {
+        AlertDialog(
+            onDismissRequest = { showCustomJumpsDialog = false },
+            title = { Text("自定义锁定次数") },
+            text = {
+                Column {
+                    Text(
+                        "当日第 N 次跳转后锁定该 App（1-99 次）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = customJumpsText,
+                        onValueChange = { customJumpsText = it.filter { c -> c.isDigit() }.take(2) },
+                        label = { Text("次数") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = (customJumpsText.toIntOrNull() ?: 0) in 1..99,
+                    onClick = {
+                        maxJumps = customJumpsText.toInt()
+                        customJumps = true
+                        showCustomJumpsDialog = false
+                    }
+                ) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showCustomJumpsDialog = false
+                    if (!customJumps) maxJumps = 3
+                }) { Text("取消") }
+            }
+        )
+    }
 }
 
 @Composable
