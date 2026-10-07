@@ -75,6 +75,7 @@ object AmsController {
                         .put("f", c.pkg)
                         .put("s", c.limitMin * 60)
                         .put("t", resolved)
+                        .put("n", c.maxJumps)
                 )
             }
             // 临时解锁层：全局豁免（锁定强度开启"计划窗口内禁用"时不激活）

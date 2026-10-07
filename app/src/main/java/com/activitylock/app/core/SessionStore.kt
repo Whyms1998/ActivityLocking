@@ -13,6 +13,8 @@ data class SessionCfg(
     val target: String,
     /** 连续使用多少分钟后触发。 */
     val limitMin: Int = 1,
+    /** 当日第 N 次跳转后锁定该 App（0=不启用，次日自动恢复）。 */
+    val maxJumps: Int = 3,
     val enabled: Boolean = true,
 )
 

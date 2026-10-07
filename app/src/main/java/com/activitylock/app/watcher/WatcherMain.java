@@ -44,9 +44,12 @@ public class WatcherMain {
     static final ConcurrentHashMap<String, Long> SESSION_ACC = new ConcurrentHashMap<>();
     static volatile String CUR_PKG = null;
     static volatile long LAST_EVT = 0;
-    static volatile long LAST_JUMP = 0;
+    static final ConcurrentHashMap<String, Long> SESSION_LASTJUMP = new ConcurrentHashMap<>();
+    static final ConcurrentHashMap<String, long[]> SESSION_JUMPS = new ConcurrentHashMap<>();    // {当日次数, 天纪元}
+    static final ConcurrentHashMap<String, long[]> SESSION_EXHAUSTED = new ConcurrentHashMap<>(); // {1, 天纪元} 当日已收走
+    static final ConcurrentHashMap<String, Integer> SESSION_MAXJ = new ConcurrentHashMap<>();     // 当日第 N 次后锁定，0=不启用
     static final long SESSION_GAP_MS = 90_000L;      // 前台事件间隔超过此值视为离开过
-    static final long JUMP_COOLDOWN_MS = 5 * 60_000L; // 跳转后冷却，防止连环跳
+    static final long JUMP_COOLDOWN_MS = 5 * 60_000L; // 跳转后冷静期：切回立即再送
     /** 全局豁免截止时间（epoch ms）：临时解锁期间放行所有启动，0=无。 */
     static volatile long GLOBAL_EXEMPT_UNTIL = 0;
     /** 按天拦截计数（ISO 日期 -> 次数），供周报趋势。 */
@@ -316,6 +319,7 @@ public class WatcherMain {
             ConcurrentHashMap<String, Long> nextUntil = new ConcurrentHashMap<>();
             ConcurrentHashMap<String, long[]> nextSess = new ConcurrentHashMap<>();
             ConcurrentHashMap<String, String> nextSessT = new ConcurrentHashMap<>();
+            ConcurrentHashMap<String, Integer> nextSessN = new ConcurrentHashMap<>();
             for (int i = 0; i < arr.length(); i++) {
                 Object el = arr.get(i);
                 if (el instanceof org.json.JSONObject) {
@@ -336,6 +340,7 @@ public class WatcherMain {
                     if (!sp.isEmpty()) {
                         nextSess.put(sp, new long[]{o.optLong("s", 0) * 1000L});
                         nextSessT.put(sp, o.optString("t", ""));
+                        nextSessN.put(sp, o.optInt("n", 3));
                     }
                     // 全局临时豁免：{"g":1,"u":到期毫秒}，过期即视为无豁免
                     if (o.optInt("g", 0) == 1) {
@@ -356,6 +361,15 @@ public class WatcherMain {
             SESSION_LIMIT.putAll(nextSess);
             SESSION_TARGET.clear();
             SESSION_TARGET.putAll(nextSessT);
+            SESSION_MAXJ.clear();
+            SESSION_MAXJ.putAll(nextSessN);
+            // 规则被删除/关闭的包，清掉它的当日计数与收走状态（app 里关开关即可解除锁定）
+            for (String k : SESSION_JUMPS.keySet()) {
+                if (!nextSess.containsKey(k)) SESSION_JUMPS.remove(k);
+            }
+            for (String k : SESSION_EXHAUSTED.keySet()) {
+                if (!nextSess.containsKey(k)) SESSION_EXHAUSTED.remove(k);
+            }
             log("reload: c=" + next.size() + " p=" + nextPkgs.size() + " f=" + nextSess.size()
                 + " g=" + (GLOBAL_EXEMPT_UNTIL > 0 ? 1 : 0));
             // 规则变化（可能换了跳转目标）→ 解除坏目标抑制，给新目标机会
@@ -410,17 +424,55 @@ public class WatcherMain {
             Long acc = SESSION_ACC.get(pkg);
             if (acc == null || acc < lim[0]) return;
             long now = android.os.SystemClock.elapsedRealtime();
-            if (now - LAST_JUMP < JUMP_COOLDOWN_MS) return;
+            Long lj = SESSION_LASTJUMP.get(pkg);
+            if (lj != null && now - lj < JUMP_COOLDOWN_MS) return;
             String target = SESSION_TARGET.get(pkg);
             if (target == null || target.isEmpty()) return;
             SESSION_ACC.put(pkg, 0L);
-            LAST_JUMP = now;
-            log("SESSION-JUMP " + pkg + " acc=" + (acc / 1000) + "s -> " + target);
-            REDIRECT_EXEC.execute(() -> {
-                if (!startViaBinder(pkg, target)) {
-                    startViaAm(pkg, target);
-                }
-            });
+            SESSION_LASTJUMP.put(pkg, now);
+            // 当日跳转次数 + 升级判定：第 N 次后当日收走（次日自动恢复）
+            long today = System.currentTimeMillis() / 86_400_000L;
+            long[] jc = SESSION_JUMPS.get(pkg);
+            long count = (jc != null && jc[1] == today) ? jc[0] : 0;
+            count++;
+            SESSION_JUMPS.put(pkg, new long[]{count, today});
+            Integer mj = SESSION_MAXJ.get(pkg);
+            if (mj != null && mj > 0 && count >= mj) {
+                SESSION_EXHAUSTED.put(pkg, new long[]{1, today});
+                log("SESSION-EXHAUSTED " + pkg + " jumps=" + count);
+            }
+            log("SESSION-JUMP " + pkg + " acc=" + (acc / 1000) + "s jumps=" + count + " -> " + target);
+            launchTargetAsync(pkg, target);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    static void launchTargetAsync(String pkg, String target) {
+        REDIRECT_EXEC.execute(() -> {
+            if (!startViaBinder(pkg, target)) {
+                startViaAm(pkg, target);
+            }
+        });
+    }
+
+    /** 冷静期内切回 / 当日已收走：都算命中闸。 */
+    static boolean sessionGateHit(String pkg) {
+        long today = System.currentTimeMillis() / 86_400_000L;
+        long[] exh = SESSION_EXHAUSTED.get(pkg);
+        if (exh != null && exh[1] == today) return true;
+        if (SESSION_LIMIT.containsKey(pkg)) {
+            Long lj = SESSION_LASTJUMP.get(pkg);
+            if (lj != null && android.os.SystemClock.elapsedRealtime() - lj < JUMP_COOLDOWN_MS) return true;
+        }
+        return false;
+    }
+
+    /** 命中闸：把学习 App 重新拉到前台。 */
+    static void enforceSessionGate(String pkg) {
+        try {
+            String target = SESSION_TARGET.get(pkg);
+            log("SESSION-GATE " + pkg + " -> " + (target == null ? "" : target));
+            if (target != null && !target.isEmpty()) launchTargetAsync(pkg, target);
         } catch (Throwable ignored) {
         }
     }
@@ -583,6 +635,11 @@ public class WatcherMain {
                 log("ALLOW(global-exempt) " + pkg + "/" + cn.getClassName());
                 return true;
             }
+            // 到点跳转闸：冷静期内切回 / 当日已收走 → 拦截并送学习 App
+            if (SESSION_TARGET.containsKey(pkg) && sessionGateHit(pkg)) {
+                enforceSessionGate(pkg);
+                return false;
+            }
             if (BLOCKED.isEmpty() && PKG_BLOCKED.isEmpty()) return true;
             String flat = cn.flattenToString();
             String full = pkg + "/" + cn.getClassName();
@@ -653,6 +710,9 @@ public class WatcherMain {
             } else {
                 sessionEvent(pkg);
                 sessionCheck(pkg);
+                if (SESSION_TARGET.containsKey(pkg) && sessionGateHit(pkg)) {
+                    enforceSessionGate(pkg);
+                }
             }
             return true;
         }

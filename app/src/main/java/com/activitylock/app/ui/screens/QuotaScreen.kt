@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -157,7 +158,8 @@ fun QuotaScreen(onBack: () -> Unit) {
                             Spacer(Modifier.width(8.dp))
                             Text(
                                 "打开「" + (AppStore.findApp(c.pkg)?.label ?: c.pkg.substringAfterLast('.')) +
-                                    "」" + c.limitMin + " 分钟后自动打开「" + sessionTargetLabel(c.target) + "」",
+                                    "」" + c.limitMin + " 分钟后自动打开「" + sessionTargetLabel(c.target) + "」" +
+                                    if (c.maxJumps > 0) "· 当日 " + c.maxJumps + " 次后锁定" else "",
                                 style = MaterialTheme.typography.labelMedium,
                                 modifier = Modifier.weight(1f)
                             )
@@ -250,8 +252,10 @@ fun QuotaScreen(onBack: () -> Unit) {
 
     if (addingSession) {
         SessionAddDialog(
-            onConfirm = { trigger, target, min ->
-                AppStore.upsertSession(SessionCfg(pkg = trigger, target = target, limitMin = min))
+            onConfirm = { trigger, target, min, maxJ ->
+                AppStore.upsertSession(
+                    SessionCfg(pkg = trigger, target = target, limitMin = min, maxJumps = maxJ)
+                )
                 refresh(context)
                 addingSession = false
             },
@@ -361,7 +365,7 @@ private fun sessionTargetLabel(target: String): String {
 
 @Composable
 private fun SessionAddDialog(
-    onConfirm: (String, String, Int) -> Unit,
+    onConfirm: (String, String, Int, Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var query1 by remember { mutableStateOf("") }
@@ -369,6 +373,7 @@ private fun SessionAddDialog(
     var trigger by remember { mutableStateOf<String?>(null) }
     var target by remember { mutableStateOf<String?>(null) }
     var minutes by remember { mutableStateOf("1") }
+    var maxJumps by remember { mutableStateOf(3) }
 
     fun candidates(q: String, exclude: String?): List<AppEntry> =
         AppStore.apps
@@ -413,13 +418,26 @@ private fun SessionAddDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                Spacer(Modifier.height(8.dp))
+                Text("当日第 N 次跳转后锁定该 App（次日恢复）", style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.height(4.dp))
+                Row {
+                    listOf(0 to "不锁定", 2 to "2 次", 3 to "3 次", 5 to "5 次").forEach { (n, label) ->
+                        FilterChip(
+                            selected = maxJumps == n,
+                            onClick = { maxJumps = n },
+                            label = { Text(label) }
+                        )
+                        Spacer(Modifier.width(4.dp))
+                    }
+                }
             }
         },
         confirmButton = {
             TextButton(
                 enabled = trigger != null && target != null &&
                     (minutes.toIntOrNull() ?: 0) in 1..240,
-                onClick = { onConfirm(trigger!!, target!!, minutes.toInt()) }
+                onClick = { onConfirm(trigger!!, target!!, minutes.toInt(), maxJumps) }
             ) { Text("保存") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
