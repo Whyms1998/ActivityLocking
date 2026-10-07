@@ -5,6 +5,7 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -136,7 +137,8 @@ fun QuotaScreen(onBack: () -> Unit) {
                         Column(Modifier.weight(1f)) {
                             Text("到点跳转", style = MaterialTheme.typography.titleSmall)
                             Text(
-                                "打开触发 App 连续满 N 分钟，自动打开学习 App；中途切走即重新计时。",
+                                "打开触发 App 连续满 N 分钟，自动打开学习 App。\n" +
+                                    "切去其他 App 在 2 分钟内回来会接着算（回消息不受影响），超过 2 分钟才重新计时。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -455,7 +457,10 @@ private fun SessionAddDialog(
                     Spacer(Modifier.height(8.dp))
                     Text("当日第 N 次跳转后锁定该 App（次日恢复）", style = MaterialTheme.typography.labelMedium)
                     Spacer(Modifier.height(4.dp))
-                    Row {
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         listOf(0 to "不锁定", 1 to "1 次", 3 to "3 次").forEach { (n, label) ->
                             FilterChip(
                                 selected = !customJumps && maxJumps == n,

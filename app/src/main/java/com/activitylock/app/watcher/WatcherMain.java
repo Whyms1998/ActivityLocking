@@ -45,11 +45,13 @@ public class WatcherMain {
     static volatile String CUR_PKG = null;
     static volatile long LAST_EVT = 0;
     static final ConcurrentHashMap<String, Long> SESSION_LASTJUMP = new ConcurrentHashMap<>();
+    static final ConcurrentHashMap<String, Long> SESSION_LEAVE = new ConcurrentHashMap<>();     // 各包最近离开时刻
     static final ConcurrentHashMap<String, long[]> SESSION_JUMPS = new ConcurrentHashMap<>();    // {当日次数, 天纪元}
     static final ConcurrentHashMap<String, long[]> SESSION_EXHAUSTED = new ConcurrentHashMap<>(); // {1, 天纪元} 当日已收走
     static final ConcurrentHashMap<String, Integer> SESSION_MAXJ = new ConcurrentHashMap<>();     // 当日第 N 次后锁定，0=不启用
     static final ConcurrentHashMap<String, String> SESSION_MODE = new ConcurrentHashMap<>();      // jump=跳转 / lock=直接锁定
     static final long SESSION_GAP_MS = 90_000L;      // 前台事件间隔超过此值视为离开过
+    static final long SESSION_GRACE_MS = 120_000L;   // 离开宽限期：2 分钟内切回接着算，防止回个消息就重置
     static final long JUMP_COOLDOWN_MS = 5 * 60_000L; // 跳转后冷静期：切回立即再送
     /** 全局豁免截止时间（epoch ms）：临时解锁期间放行所有启动，0=无。 */
     static volatile long GLOBAL_EXEMPT_UNTIL = 0;
@@ -388,7 +390,11 @@ public class WatcherMain {
      * 目标支持三种写法：深链（xhsdiscover://search）、组件名（pkg/Class）、
      * 裸类名（Class，视为被锁应用内的界面）。
      */
-    /** 前台事件：累计连续使用时长（切走即清零，间隔过久视为离开）。 */
+    /**
+     * 前台事件：累计连续使用时长。
+     * 切走会清零，但留有 2 分钟宽限期——快速回个微信再回来会接着算，
+     * 超过 2 分钟才视为真正离开、重新计时（防"秒切重置"规避）。
+     */
     static void sessionEvent(String pkg) {
         try {
             long now = android.os.SystemClock.elapsedRealtime();
@@ -396,10 +402,23 @@ public class WatcherMain {
                 long delta = now - LAST_EVT;
                 Long acc = SESSION_ACC.get(pkg);
                 long base = acc == null ? 0 : acc;
-                SESSION_ACC.put(pkg, (delta >= 0 && delta < SESSION_GAP_MS) ? base + delta : 0L);
+                if (delta >= 0 && delta < SESSION_GAP_MS) {
+                    SESSION_ACC.put(pkg, base + delta);
+                } else if (delta <= SESSION_GRACE_MS) {
+                    // 短暂无事件（息屏/回消息）：保留累计，不把离开时间计入
+                } else {
+                    SESSION_ACC.put(pkg, 0L); // 离开过久，重新计
+                }
             } else {
+                String curPkg = CUR_PKG;
+                if (curPkg != null) SESSION_LEAVE.put(curPkg, now);
+                Long leave = SESSION_LEAVE.get(pkg);
+                Long acc = SESSION_ACC.get(pkg);
+                boolean withinGrace = leave != null && (now - leave) <= SESSION_GRACE_MS;
+                if (!withinGrace || acc == null) {
+                    SESSION_ACC.put(pkg, 0L); // 刚进入，或离开超过宽限期：从零开始
+                } // 宽限期内切回：保留累计，接着算
                 CUR_PKG = pkg;
-                SESSION_ACC.put(pkg, 0L); // 刚进入，从零开始（连续使用语义）
             }
             LAST_EVT = now;
         } catch (Throwable ignored) {
