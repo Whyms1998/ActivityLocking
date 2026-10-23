@@ -10,7 +10,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -425,7 +432,14 @@ fun FavoritesScreen(
         }
     }
 
-    Box(Modifier.fillMaxSize()) {
+    var fabPos by remember { mutableStateOf<Offset?>(null) }
+    var fabSize by remember { mutableStateOf(android.util.Size(0, 0)) }
+    var boxSize by remember { mutableStateOf(android.util.Size(0, 0)) }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .onSizeChanged { boxSize = android.util.Size(it.width, it.height) }
+    ) {
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier
@@ -446,6 +460,36 @@ fun FavoritesScreen(
                     selectedPkgs.clear()
                     selecting = false
                 }) { Text("退出") }
+                var groupMenuOpen by remember { mutableStateOf(false) }
+                TextButton(onClick = { groupMenuOpen = true }) { Text("分组") }
+                Box {
+                    DropdownMenu(expanded = groupMenuOpen, onDismissRequest = { groupMenuOpen = false }) {
+                        AppStore.groups.forEach { g ->
+                            DropdownMenuItem(
+                                text = { Text("分组到：" + g.name) },
+                                onClick = {
+                                    selectedList.forEach { AppStore.assignGroup(it, g.id) }
+                                    groupMenuOpen = false
+                                }
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("移出分组") },
+                            onClick = {
+                                selectedList.forEach { AppStore.assignGroup(it, null) }
+                                groupMenuOpen = false
+                            }
+                        )
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("＋ 新建分组") },
+                            onClick = {
+                                showNewGroupFor = ""
+                                groupMenuOpen = false
+                            }
+                        )
+                    }
+                }
             } else {
                 Text("工作台", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                 IconButton(onClick = { searchOpen = !searchOpen; if (!searchOpen) searchQ = "" }) {
@@ -771,9 +815,38 @@ fun FavoritesScreen(
         }
     }
 
+    // 雪花 FAB：默认右下角，可拖动（位置会话内记忆）
     androidx.compose.material3.FloatingActionButton(
         onClick = { freezeAllAction() },
-        containerColor = MaterialTheme.colorScheme.primary
+        containerColor = MaterialTheme.colorScheme.primary,
+        modifier = Modifier
+            .align(Alignment.TopStart)
+            .offset {
+                val base = Offset(
+                    (boxSize.width - fabSize.width - 48.dp.roundToPx()).toFloat(),
+                    (boxSize.height - fabSize.height - 200.dp.roundToPx()).toFloat(),
+                )
+                val p0 = fabPos ?: base
+                IntOffset(
+                    p0.x.coerceIn(0f, (boxSize.width - fabSize.width).toFloat()).roundToInt(),
+                    p0.y.coerceIn(0f, (boxSize.height - fabSize.height).toFloat()).roundToInt(),
+                )
+            }
+            .onSizeChanged { fabSize = android.util.Size(it.width, it.height) }
+            .pointerInput(Unit) {
+                detectDragGestures { change, dragAmount ->
+                    change.consume()
+                    val base = Offset(
+                        (boxSize.width - fabSize.width - 48.dp.roundToPx()).toFloat(),
+                        (boxSize.height - fabSize.height - 200.dp.roundToPx()).toFloat(),
+                    )
+                    val cur = fabPos ?: base
+                    fabPos = Offset(
+                        (cur.x + dragAmount.x).coerceIn(0f, (boxSize.width - fabSize.width).toFloat()),
+                        (cur.y + dragAmount.y).coerceIn(0f, (boxSize.height - fabSize.height).toFloat()),
+                    )
+                }
+            }
     ) {
         Icon(
             Icons.Default.AcUnit,
@@ -796,7 +869,6 @@ fun FavoritesScreen(
             onEditUnlock = { editingUnlock = it },
             onDeleteRequest = { ruleDeleteRequest(it) },
             onRelockConfig = { relockCfgRule = it },
-            onNewGroup = { showNewGroupFor = it },
         )
     }
 
@@ -1334,8 +1406,6 @@ private fun GridDetailDialog(
     onDeleteRequest: (LockRule) -> Unit,
     /** 配置该界面的自动锁闭（重锁延迟，界面级优先于全局）。 */
     onRelockConfig: (LockRule) -> Unit,
-    /** 新建分组（参数 = 要分配到的包名，空串表示仅创建）。 */
-    onNewGroup: (String) -> Unit,
 ) {
     val memberRules = AppStore.rules.filter { it.packageName == pkg }
     val label = AppStore.findApp(pkg)?.label ?: pkg.substringAfterLast('.')
@@ -1358,87 +1428,82 @@ private fun GridDetailDialog(
                     TextButton(onClick = onClose) { Text("关闭") }
                 }
                 Spacer(Modifier.height(8.dp))
-                Text("分组", style = MaterialTheme.typography.labelMedium)
-                Row(Modifier.horizontalScroll(rememberScrollState())) {
-                    FilterChip(
-                        selected = AppStore.groupAssign[pkg] == null,
-                        onClick = { AppStore.assignGroup(pkg, null) },
-                        label = { Text("默认") }
-                    )
-                    AppStore.groups.forEach { g ->
-                        FilterChip(
-                            selected = AppStore.groupAssign[pkg] == g.id,
-                            onClick = { AppStore.assignGroup(pkg, g.id) },
-                            label = { Text(g.name) }
-                        )
-                    }
-                    FilterChip(
-                        selected = false,
-                        onClick = { onNewGroup(pkg) },
-                        label = { Text("＋ 新建") }
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
                 Column(
                     Modifier
                         .heightIn(max = 420.dp)
                         .verticalScroll(rememberScrollState())
                 ) {
                     memberRules.forEach { rule ->
-                        Row(
-                            Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    rule.note.ifBlank { rule.activityName.substringAfterLast('.') },
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    rule.activityName.substringAfterLast('.') +
-                                        if (rule.locked) " · 拦截中" else "",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            IconButton(onClick = { onEditUnlock(rule) }) {
-                                Icon(
-                                    Icons.Default.Key,
-                                    contentDescription = "解锁条件",
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                            IconButton(onClick = { onEdit(rule) }) {
-                                Icon(
-                                    Icons.Default.Edit,
-                                    contentDescription = "编辑",
-                                    modifier = Modifier.size(18.dp)
+                        Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                            // 第一行：页面名称 + 开关
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        rule.note.ifBlank { rule.activityName.substringAfterLast('.') },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        rule.activityName.substringAfterLast('.') +
+                                            if (rule.locked) " · 拦截中" else "",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Switch(
+                                    checked = rule.locked,
+                                    onCheckedChange = { want -> onToggleLock(rule.activityName, want) }
                                 )
                             }
-                            IconButton(onClick = { onRelockConfig(rule) }) {
-                                Icon(
-                                    Icons.Default.Schedule,
-                                    contentDescription = "自动锁闭",
-                                    modifier = Modifier.size(18.dp)
-                                )
+                            // 第二行：四个操作按钮（右对齐）
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                IconButton(onClick = { onEditUnlock(rule) }) {
+                                    Icon(
+                                        Icons.Default.Key,
+                                        contentDescription = "解锁条件",
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                IconButton(onClick = { onRelockConfig(rule) }) {
+                                    Icon(
+                                        Icons.Default.Schedule,
+                                        contentDescription = "自动锁闭",
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                IconButton(onClick = { onEdit(rule) }) {
+                                    Icon(
+                                        Icons.Default.Edit,
+                                        contentDescription = "编辑",
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                IconButton(onClick = { onDeleteRequest(rule) }) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "删除",
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                             }
-                            IconButton(onClick = { onDeleteRequest(rule) }) {
-                                Icon(
-                                    Icons.Default.Delete,
-                                    contentDescription = "删除",
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                            Switch(
-                                checked = rule.locked,
-                                onCheckedChange = { want -> onToggleLock(rule.activityName, want) }
-                            )
                         }
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp)
+                                .height(1.dp)
+                                .background(MaterialTheme.colorScheme.outlineVariant)
+                        )
                     }
                 }
             }
