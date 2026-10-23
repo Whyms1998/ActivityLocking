@@ -180,7 +180,7 @@ class RuleStore(filesDir: File) {
                 verifyDelaySec =
                     if (validMode == VerifyGate.METHOD_DELAY) delaySec?.let { VerifyGate.safeDelaySec(it) } else null,
                 verifyPassword = if (validMode == VerifyGate.METHOD_PASSWORD) password?.trim()?.takeIf { s -> s.isNotBlank() } else null,
-                quizCount = if (validMode == VerifyGate.METHOD_QUIZ) quizCount?.coerceIn(1, 10) else null,
+                quizCount = if (validMode == VerifyGate.METHOD_QUIZ) quizCount?.coerceIn(1, 999) else null,
             ) else it
         }
         save()
@@ -211,7 +211,7 @@ class RuleStore(filesDir: File) {
                 verifyPassword =
                     if (validMode == VerifyGate.METHOD_PASSWORD) password?.trim()?.takeIf { it.isNotBlank() } else null,
                 quizCount =
-                    if (validMode == VerifyGate.METHOD_QUIZ) quizCount?.coerceIn(1, 10) else null,
+                    if (validMode == VerifyGate.METHOD_QUIZ) quizCount?.coerceIn(1, 999) else null,
             )
         }
         _appVerify.value = next

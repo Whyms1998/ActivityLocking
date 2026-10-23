@@ -34,6 +34,8 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.AcUnit
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.DropdownMenu
@@ -455,10 +457,15 @@ fun FavoritesScreen(
                 }) {
                     Icon(Icons.Default.Checklist, contentDescription = "多选")
                 }
-                TextButton(onClick = {
+                IconButton(onClick = {
                     gridView = !gridView
                     uiPrefs.edit().putBoolean("workbench_grid", gridView).apply()
-                }) { Text(if (gridView) "列表" else "宫格") }
+                }) {
+                    Icon(
+                        if (gridView) Icons.Default.ViewList else Icons.Default.GridView,
+                        contentDescription = if (gridView) "切换为列表" else "切换为宫格"
+                    )
+                }
                 IconButton(onClick = { refreshTick++ }) {
                     Icon(Icons.Default.Refresh, contentDescription = "刷新状态")
                 }
@@ -764,14 +771,16 @@ fun FavoritesScreen(
         }
     }
 
-    androidx.compose.material3.ExtendedFloatingActionButton(
+    androidx.compose.material3.FloatingActionButton(
         onClick = { freezeAllAction() },
-        icon = { Icon(Icons.Default.AcUnit, contentDescription = null) },
-        text = { Text(if (rules.any { !it.locked }) "一键冻结" else "全部解锁") },
-        modifier = Modifier
-            .align(Alignment.BottomEnd)
-            .padding(20.dp)
-    )
+        containerColor = MaterialTheme.colorScheme.primary
+    ) {
+        Icon(
+            Icons.Default.AcUnit,
+            contentDescription = if (rules.any { !it.locked }) "一键冻结" else "全部解锁",
+            tint = MaterialTheme.colorScheme.onPrimary
+        )
+    }
     }
 
     gridDetailPkg?.let { pkg ->
@@ -787,6 +796,7 @@ fun FavoritesScreen(
             onEditUnlock = { editingUnlock = it },
             onDeleteRequest = { ruleDeleteRequest(it) },
             onRelockConfig = { relockCfgRule = it },
+            onNewGroup = { showNewGroupFor = it },
         )
     }
 
@@ -1004,6 +1014,8 @@ fun FavoritesScreen(
     editing?.let { rule ->
         var text by remember(rule) { mutableStateOf(rule.note) }
         var redirect by remember(rule) { mutableStateOf(rule.redirectUri ?: "") }
+        /** 应用跳转开关：关 = 仅拦截（redirect 存空）；开 = 显示目标输入。 */
+        var redirectOn by remember(rule) { mutableStateOf(redirect.isNotBlank()) }
         // ★ v1.24.9：每日限额改用统一的时长输入（分钟 / 小时）；0 = 不限
         var quotaSec by remember(rule) { mutableStateOf((rule.quotaMin ?: 0) * 60) }
         val quotaOver = quotaSec / 60 > 1440
@@ -1077,15 +1089,34 @@ fun FavoritesScreen(
                             .focusRequester(noteFocus)
                     )
                     Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = redirect,
-                        onValueChange = { redirect = it },
-                        label = { Text("拦截后跳转（留空则仅拦截）") },
-                    // ★ v1.24.7：跳转是自由文本，不是数字范围输入，此处只声明不做钳制；
-                    //   真正需要范围的输入框一律用「原样保留 + isError + 常驻范围文案」口径。
-                        placeholder = { Text("深链 xhsdiscover://search 或界面类名") },
-                        singleLine = true
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("应用跳转", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                        Switch(
+                            checked = redirectOn,
+                            onCheckedChange = { on ->
+                                redirectOn = on
+                                if (!on) redirect = ""
+                            }
+                        )
+                    }
+                    if (redirectOn) {
+                        OutlinedTextField(
+                            value = redirect,
+                            onValueChange = { redirect = it },
+                            label = { Text("跳转目标（拦截后跳到这里）") },
+                        // ★ v1.24.7：跳转是自由文本，不是数字范围输入，此处只声明不做钳制；
+                        //   真正需要范围的输入框一律用「原样保留 + isError + 常驻范围文案」口径。
+                            placeholder = { Text("深链 xhsdiscover://search 或界面类名") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
+                        Text(
+                            "仅拦截：界面被打开时直接挡回，不跳转",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Spacer(Modifier.height(8.dp))
                     // ★ v1.24.9：与自动锁闭详情页同构 —— 每日限额统一走 [DurationField]。
                     //   清空 = 0 = 不限额度；限额按分钟统计，所以单位只开放 分钟 / 小时，
@@ -1303,6 +1334,8 @@ private fun GridDetailDialog(
     onDeleteRequest: (LockRule) -> Unit,
     /** 配置该界面的自动锁闭（重锁延迟，界面级优先于全局）。 */
     onRelockConfig: (LockRule) -> Unit,
+    /** 新建分组（参数 = 要分配到的包名，空串表示仅创建）。 */
+    onNewGroup: (String) -> Unit,
 ) {
     val memberRules = AppStore.rules.filter { it.packageName == pkg }
     val label = AppStore.findApp(pkg)?.label ?: pkg.substringAfterLast('.')
@@ -1323,6 +1356,27 @@ private fun GridDetailDialog(
                         )
                     }
                     TextButton(onClick = onClose) { Text("关闭") }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("分组", style = MaterialTheme.typography.labelMedium)
+                Row(Modifier.horizontalScroll(rememberScrollState())) {
+                    FilterChip(
+                        selected = AppStore.groupAssign[pkg] == null,
+                        onClick = { AppStore.assignGroup(pkg, null) },
+                        label = { Text("默认") }
+                    )
+                    AppStore.groups.forEach { g ->
+                        FilterChip(
+                            selected = AppStore.groupAssign[pkg] == g.id,
+                            onClick = { AppStore.assignGroup(pkg, g.id) },
+                            label = { Text(g.name) }
+                        )
+                    }
+                    FilterChip(
+                        selected = false,
+                        onClick = { onNewGroup(pkg) },
+                        label = { Text("＋ 新建") }
+                    )
                 }
                 Spacer(Modifier.height(8.dp))
                 Column(
