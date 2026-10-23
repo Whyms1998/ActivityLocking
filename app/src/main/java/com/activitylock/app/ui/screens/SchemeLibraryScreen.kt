@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Card
@@ -92,12 +93,17 @@ fun SchemeLibraryScreen(onBack: () -> Unit) {
                     item {
                         Text(
                             "常用 Scheme",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                         )
                     }
-                    items(filtered, key = { it.uri }) { p ->
+                    // ★ key 必须唯一：SchemePresets 里存在 uri 完全相同的两条
+                    //   （「高德地图 · 搜索」与「高德 · 路线」都是 amapuri://search/general?keyword=），
+                    //   用 uri 做 key 会让列表滚动到这两条同时进入组合时抛
+                    //   IllegalArgumentException: Key ... was already used → 整页闪退。
+                    //   改用 name（预设名互不重复）。
+                    items(filtered, key = { it.name }) { p ->
                         SchemeRow(p.name, p.uri)
                     }
                 }
@@ -105,12 +111,17 @@ fun SchemeLibraryScreen(onBack: () -> Unit) {
                     item {
                         Text(
                             "本机可响应 “$q” 的应用",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            // ★ v1.24.9：用户可粘贴任意长的深链来查找，标题必须单行省略，
+                            //   否则超长 URI 会把标题折成两三行。
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                         )
                     }
-                    items(handlers, key = { it.second + it.first }) { (label, cls) ->
+                    // 同一组件可能被多条 intent-filter 命中而重复出现，用下标做 key 最稳
+                    itemsIndexed(handlers) { _, (label, cls) ->
                         Card(
                             Modifier
                                 .fillMaxWidth()

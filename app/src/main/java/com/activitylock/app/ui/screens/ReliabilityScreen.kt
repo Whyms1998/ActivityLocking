@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
@@ -57,6 +58,22 @@ fun ReliabilityScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
     var refreshTick by remember { mutableStateOf(0) }
 
+    // ★ 「刷新」按钮为什么之前没反应：这些检查项全是普通函数调用（背后不是 Compose
+    //   state），如果不在组合中读取 refreshTick，点击只是写了一次无人消费的状态 →
+    //   不触发重组，界面永远停留在首次进入时的采样结果。
+    //   用 remember(refreshTick) 把每次采样的结果固定下来即可让刷新真正生效。
+    val checks = remember(refreshTick) {
+        listOf(
+            "Shizuku 已连接并授权" to (ShizukuManager.installed() && ShizukuManager.granted()),
+            "拦截进程存活" to AmsController.isRunning(),
+            "防卸载保护（设备管理员）" to isActiveAdmin(ctx),
+            "通知权限" to notificationsEnabled(ctx),
+            "电池优化已豁免" to batteryExempt(ctx),
+        )
+    }
+    val adminOk = checks[2].second
+    val batteryOk = checks[4].second
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -84,14 +101,10 @@ fun ReliabilityScreen(onBack: () -> Unit) {
                     modifier = Modifier.padding(16.dp)
                 )
             }
-            item { CheckRow("Shizuku 已连接并授权", ShizukuManager.installed() && ShizukuManager.granted()) }
-            item { CheckRow("拦截进程存活", AmsController.isRunning()) }
-            item { CheckRow("防卸载保护（设备管理员）", isActiveAdmin(ctx)) }
-            item { CheckRow("通知权限", notificationsEnabled(ctx)) }
-            item { CheckRow("电池优化已豁免", batteryExempt(ctx)) }
+            items(checks) { (title, ok) -> CheckRow(title, ok) }
             item {
                 Column(Modifier.padding(16.dp)) {
-                    if (!isActiveAdmin(ctx)) {
+                    if (!adminOk) {
                         Button(onClick = {
                             ctx.startActivity(
                                 Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
@@ -107,7 +120,7 @@ fun ReliabilityScreen(onBack: () -> Unit) {
                         }, modifier = Modifier.fillMaxWidth()) { Text("激活防卸载保护") }
                         Spacer(Modifier.height(8.dp))
                     }
-                    if (!batteryExempt(ctx)) {
+                    if (!batteryOk) {
                         Button(onClick = {
                             ctx.startActivity(
                                 Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
@@ -153,7 +166,8 @@ private fun CheckRow(title: String, ok: Boolean) {
             )
             Spacer(Modifier.width(12.dp))
             Text(
-                title + (if (ok) "" else " · 未满足"),
+                // ★ 规范 §1：原来 "title · 未满足" 用中点串状态 → 括号收进标题里
+                title + (if (ok) "" else "（未满足）"),
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (ok) MaterialTheme.colorScheme.onSurface
                 else MaterialTheme.colorScheme.error

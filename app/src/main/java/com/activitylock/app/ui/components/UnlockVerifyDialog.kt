@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -52,6 +53,13 @@ fun UnlockVerifyDialog(
     onDismiss: () -> Unit,
 ) {
     val ctx = LocalContext.current
+    // ★ 输入法遮挡修复（真机实测结论）：
+    //   本页用 enableEdgeToEdge()，而 Dialog 是独立 window；键盘弹出时该 window
+    //   既不 resize 也不上报 IME insets → 只加 imePadding() 完全不生效，
+    //   口算题 / 照抄随机密码这两个打字模式的「确认解锁」按钮会被键盘盖住。
+    //   正解是把 Dialog 的 window 设为 ADJUST_RESIZE（DialogImeResize），让窗口收缩。
+    //   ★ 但它**必须在 Dialog 内容 lambda 内部**调用：写在这里拿到的是 Activity 视图
+    //     → DialogWindowProvider 转换失败 → window=null → 静默失效（v1.14.0 实测踩到）。
     // 时段外：验证一律不通过（解锁时间范围）
     // enforceWindow=false 用于设置页防绕过修改：时间范围只约束"解锁去玩"，
     // 不约束调整自己的设置（否则窗外连关闭限制都做不到，形成死锁）
@@ -68,10 +76,16 @@ fun UnlockVerifyDialog(
             decorFitsSystemWindows = true,
         )
     ) {
+        // ★ 必须在 Dialog 内容内部调用：此时 LocalView 才是该对话框自己的视图
+        DialogImeResize()
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(
                 Modifier
                     .fillMaxSize()
+                    // 兜底：若 ROM 走 IME-insets 上报路径，这里把内容整体上推；
+                    // 若走 window-resize 路径（见上方 DialogImeResize 注释），
+                    // insets 为 0，此处退化为无操作，不会重复顶高。
+                    .imePadding()
                     .padding(horizontal = 32.dp, vertical = 48.dp)
             ) {
                 Icon(
@@ -136,7 +150,11 @@ fun UnlockVerifyDialog(
                                 style = MaterialTheme.typography.labelMedium
                             )
                         }
-                        Spacer(Modifier.weight(1f))
+                        // ★ 打字模式：按钮**紧跟输入框**，不用 weight 顶到屏幕底部。
+                        //   键盘弹出时若窗口未随键盘收缩（部分 ROM 忽略 adjustResize），
+                        //   贴底的按钮会被键盘完全盖住；贴住内容则天然落在键盘上方，
+                        //   口算题不必先手动收起键盘才能点到「确认解锁」。
+                        Spacer(Modifier.height(24.dp))
                         Row(Modifier.fillMaxWidth()) {
                             TextButton(onClick = {
                                 question = VerifyGate.genQuiz(); input = ""
@@ -146,6 +164,7 @@ fun UnlockVerifyDialog(
                             Spacer(Modifier.width(8.dp))
                             Button(enabled = ok, onClick = { onConfirmed() }) { Text("确认解锁") }
                         }
+                        Spacer(Modifier.weight(1f))
                     }
                     VerifyGate.METHOD_RANDOM -> {
                         var target by remember { mutableStateOf(VerifyGate.genRandomCode(req.randomDigits)) }
@@ -180,12 +199,14 @@ fun UnlockVerifyDialog(
                             Spacer(Modifier.height(8.dp))
                             Text("不一致，请照抄", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
                         }
-                        Spacer(Modifier.weight(1f))
+                        // ★ 打字模式：按钮紧跟输入框（原因见 QUIZ 分支注释）
+                        Spacer(Modifier.height(24.dp))
                         Row(Modifier.fillMaxWidth()) {
                             TextButton(onClick = onDismiss) { Text("取消") }
                             Spacer(Modifier.weight(1f))
                             Button(enabled = ok, onClick = { onConfirmed() }) { Text("确认解锁") }
                         }
+                        Spacer(Modifier.weight(1f))
                     }
                     VerifyGate.METHOD_PASSWORD -> {
                         var input by remember { mutableStateOf("") }
@@ -205,7 +226,8 @@ fun UnlockVerifyDialog(
                                 style = MaterialTheme.typography.labelMedium
                             )
                         }
-                        Spacer(Modifier.weight(1f))
+                        // ★ 打字模式：按钮紧跟输入框（原因见 QUIZ 分支注释）
+                        Spacer(Modifier.height(24.dp))
                         Row(Modifier.fillMaxWidth()) {
                             Spacer(Modifier.weight(1f))
                             TextButton(onClick = onDismiss) { Text("取消") }
@@ -222,19 +244,26 @@ fun UnlockVerifyDialog(
                                 remaining--
                             }
                         }
+                        // ★ v1.24.9：等待时长放开到任意值（可以填「2 小时」），
+                        //   再直接显示秒读数就是 `7200 秒后可解锁`，没人看得懂。
+                        //   不足 1 分钟保持原来的大号秒表观感，更长则换成
+                        //   「12 分 30 秒」「2 小时 0 分」并降一档字号防溢出。
+                        val shortForm = remaining < 60
                         Column(
                             Modifier.fillMaxWidth(),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
-                                "$remaining",
-                                style = MaterialTheme.typography.displayLarge
+                                if (shortForm) "$remaining"
+                                else VerifyGate.delayCountdownLabel(remaining),
+                                style = (if (shortForm) MaterialTheme.typography.displayLarge
+                                else MaterialTheme.typography.headlineMedium)
                                     .copy(fontFeatureSettings = "tnum", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold),
                                 color = if (remaining > 0) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                "秒后可解锁",
+                                if (shortForm) "秒后可解锁" else "后可解锁",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

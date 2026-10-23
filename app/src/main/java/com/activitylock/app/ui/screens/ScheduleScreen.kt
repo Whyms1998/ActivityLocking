@@ -105,7 +105,8 @@ fun ScheduleScreen(onBack: () -> Unit) {
             ) {
                 Text(
                     if (active) "当前：计划内（全部规则已自动上锁）"
-                    else "当前：计划外 · 切换最迟 15 分钟内自动生效",
+                    // ★ 规范 §1：原来「当前：计划外 · 切换最迟 15 分钟内自动生效」是中点串状态+说明
+                    else "当前：计划外（切换最迟 15 分钟内自动生效）",
                     style = MaterialTheme.typography.labelMedium,
                     color = if (active) MaterialTheme.colorScheme.onPrimaryContainer
                     else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -247,6 +248,8 @@ private fun ScheduleEditorDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial == null) "新建计划" else "编辑计划") },
         text = {
+            // ★ 名称输入框会唤起键盘 → 让 Dialog window 随键盘收缩
+            com.activitylock.app.ui.components.DialogImeResize()
             Column {
                 OutlinedTextField(
                     value = label,

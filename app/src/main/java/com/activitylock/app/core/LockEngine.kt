@@ -22,10 +22,47 @@ object LockEngine {
             if (lock) lock(pkg, cls, redirectUri) else unlock(pkg, cls)
         }
 
-    /** 跳转目标：显式传入优先，否则沿用收藏夹里已存的。 */
+    /**
+     * 「保存跳转目标」的唯一入口 —— 保证填进去的跳转**真的能生效**。
+     *
+     * ★ 为什么不能只写字段：跳转只在「拦截模式（block）+ 组件保持启用」下成立。
+     *   - 组件被 `pm disable-user` 禁用时，点图标根本不会产生启动请求，
+     *     拦截器（IActivityController）无从感知，自然也跳不了；
+     *   - 规则 block=false 时 [AmsController.writeRules] 不会把它下发给 Watcher。
+     *   此前「编辑界面」只调 `AppStore.updateRedirect()`，于是对一条 pm 模式的
+     *   条目补填跳转 = **静默无效**（UI 显示已保存，实际点图标依旧无反应）。
+     *
+     * 本方法按需重锁一次把它切到拦截模式；不需要重锁时仅同步字段 + 下发规则。
+     *
+     * @return null 表示无需切换模式（仅更新字段）；否则返回重锁结果，
+     *         调用方可据此提示失败原因。
+     */
+    suspend fun saveRedirect(pkg: String, cls: String, uri: String?): LockOutcome? {
+        val clean = uri?.trim()?.takeIf { it.isNotBlank() }
+        val rule = AppStore.rules.firstOrNull { it.packageName == pkg && it.activityName == cls }
+        AppStore.updateRedirect(pkg, cls, clean)
+        // 只有「已锁定 + 填了跳转 + 当前不是拦截模式（或组件仍被禁用）」才需要重锁
+        val needsRelock = clean != null && rule != null && rule.locked &&
+            (!rule.block || AppStore.isDisabled(pkg, cls))
+        if (!needsRelock) {
+            AmsController.writeRules()
+            return null
+        }
+        return apply(pkg, cls, true, clean)
+    }
+
+    /**
+     * 跳转目标：显式传入优先，否则沿用收藏夹里已存的。
+     *
+     * ★ 两处都必须把**空串**过滤成 null：历史数据里存在 `redirectUri = ""`
+     *   （或 `writeRules` 下发的空值）的条目，若原样返回空串，[lock] 会以为
+     *   「有跳转」而走 [lockWithRedirect]，把一条纯拦截条目错误地切到拦截模式，
+     *   并给 Watcher 下发 `r=""` 的规则。
+     */
     private fun effectiveRedirect(pkg: String, cls: String, redirectUri: String?): String? =
         redirectUri?.trim()?.takeIf { it.isNotBlank() }
-            ?: AppStore.rules.firstOrNull { it.packageName == pkg && it.activityName == cls }?.redirectUri
+            ?: AppStore.rules.firstOrNull { it.packageName == pkg && it.activityName == cls }
+                ?.redirectUri?.trim()?.takeIf { it.isNotBlank() }
 
     private fun lock(pkg: String, cls: String, redirectUri: String?): LockOutcome {
         val redirect = effectiveRedirect(pkg, cls, redirectUri)
@@ -104,6 +141,8 @@ object LockEngine {
         AppStore.updateLocked(pkg, cls, false)
         AmsController.writeRules()
         AppStore.recordHistory(pkg, cls, "pm", "UNLOCK")
+        // 通知自动锁闭记账：该界面已解锁，若开启「解锁后重新锁」则开始计时
+        runCatching { AutoRelock.noteUnlocked(pkg, cls) }
         return LockOutcome(false, "pm", "已解锁（条目保留在收藏夹）")
     }
 }

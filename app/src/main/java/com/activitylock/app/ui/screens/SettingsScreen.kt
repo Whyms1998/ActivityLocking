@@ -16,17 +16,21 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.AdminPanelSettings
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Cable
+import androidx.compose.material.icons.filled.CollectionsBookmark
 import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.HistoryToggleOff
+import androidx.compose.material.icons.filled.HourglassBottom
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.LockClock
+import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -62,18 +66,19 @@ fun SettingsScreen(
     onOpenSchedules: () -> Unit,
     onOpenQuota: () -> Unit,
     onOpenScenes: () -> Unit,
-    onOpenStats: () -> Unit,
     onOpenFocus: () -> Unit,
     onOpenAdmin: () -> Unit,
     onOpenStrength: () -> Unit,
+    onOpenAutoRelock: () -> Unit,
 ) {
+    // Shizuku 状态实时刷新，显示在「连接」入口的副标题里。
+    // （原先这段轮询算了值却没有任何地方消费，属于无效刷新。）
     var status by remember { mutableStateOf(shizukuStatusText()) }
-    var tick by remember { mutableStateOf(0) }
-
-    LaunchedEffect(tick) {
-        status = shizukuStatusText()
-        delay(1500)
-        tick++
+    LaunchedEffect(Unit) {
+        while (true) {
+            status = shizukuStatusText()
+            delay(1500)
+        }
     }
 
     Column(
@@ -87,90 +92,96 @@ fun SettingsScreen(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
         )
 
-        SettingsGroup("核心功能")
+        // ---------- 核心自律 ----------
+        // ★「解锁验证」原先被归在「系统」组、排在「防卸载保护」旁边 —— 它是全 App
+        //   最核心的自律机制（决定所有界面怎么解锁），却和运维项混在一起，位置完全不对。
+        SettingsGroup("核心自律")
         SettingsEntry(
-            icon = Icons.Default.Build,
+            icon = Icons.Default.Fingerprint,
+            title = "解锁验证",
+            onClick = onOpenVerify
+        )
+        SettingsEntry(
+            icon = Icons.Default.Policy,
             title = "锁定强度",
-            subtitle = "临时解锁时长与次数、计划内禁用豁免",
             onClick = onOpenStrength
         )
+
+        // ---------- 自动执行 ----------
+        // ★ 自动锁闭 / 自动冻结 归到同一组，副标题明确区分「图标保留」vs「整包禁用」，
+        //   避免这两个名字相近、行为不同（一个是黑名单、一个是白名单）的功能互相混淆。
+        SettingsGroup("自动执行")
         SettingsEntry(
-            icon = Icons.Default.Star,
-            title = "方案库",
-            subtitle = "常用 App 一键配置，误删可一键恢复",
-            onClick = onOpenPresets
-        )
-        SettingsEntry(
-            icon = Icons.Default.PlayArrow,
-            title = "场景模式",
-            subtitle = "方案集合一键启用/停用",
-            onClick = onOpenScenes
-        )
-        SettingsEntry(
-            icon = Icons.Default.PlayArrow,
-            title = "专注会话",
-            subtitle = "一键锁定所选 App，到时自动恢复",
-            onClick = onOpenFocus
+            icon = Icons.Default.LockClock,
+            title = "自动锁闭",
+            // ★ 规范 §1：原来「解锁后 / 退出后 / 锁屏后重新上锁 · 图标保留、点击被拦」，
+            //   一条副标题里塞了 3 个时机 + 2 个特性、还用中点串了起来 → 顿号 + 括号归拢
+            onClick = onOpenAutoRelock
         )
         SettingsEntry(
             icon = Icons.Default.DateRange,
             title = "定时计划",
-            subtitle = "睡眠模式：指定时段自动全部上锁",
             onClick = onOpenSchedules
         )
+
+        // ---------- 专注与限额 ----------
+        SettingsGroup("专注与限额")
         SettingsEntry(
-            icon = Icons.Default.Info,
+            icon = Icons.Default.Timer,
+            title = "专注会话",
+            onClick = onOpenFocus
+        )
+        SettingsEntry(
+            icon = Icons.Default.HourglassBottom,
             title = "时长限额",
-            subtitle = "每日使用上限，超额当天拦截",
             onClick = onOpenQuota
         )
-        SettingsGroup("数据与工具")
         SettingsEntry(
-            icon = Icons.Default.Notifications,
-            title = "拦截统计",
-            subtitle = "今日与累计拦截次数、最近事件",
-            onClick = onOpenStats
+            icon = Icons.Default.AutoAwesome,
+            title = "场景模式",
+            onClick = onOpenScenes
+        )
+
+        // ---------- 方案与工具 ----------
+        // 「拦截统计」已从此处移除：底部 Tab 已有独立的「统计」，同功能双入口是混乱来源之一。
+        SettingsGroup("方案与工具")
+        SettingsEntry(
+            icon = Icons.Default.CollectionsBookmark,
+            title = "方案库",
+            onClick = onOpenPresets
         )
         SettingsEntry(
-            icon = Icons.Default.List,
+            icon = Icons.Default.HistoryToggleOff,
             title = "锁定历史",
-            subtitle = "历史记录查询，删除后也能找回",
             onClick = onOpenHistory
         )
         SettingsEntry(
             icon = Icons.Default.Search,
             title = "Activity 查询",
-            subtitle = "悬浮显示当前界面的包名和类名",
             onClick = onOpenInspector
         )
         SettingsEntry(
-            icon = Icons.Default.Share,
+            icon = Icons.Default.Link,
             title = "URL Scheme 库",
-            subtitle = "常用深链查询、复制与测试",
             onClick = onOpenSchemes
         )
+
+        // ---------- 系统 ----------
         SettingsGroup("系统")
         SettingsEntry(
-            icon = Icons.Default.Build,
+            icon = Icons.Default.Cable,
             title = "连接",
-            subtitle = "Shizuku 状态与授权",
+            subtitle = "Shizuku：$status",
             onClick = onOpenConnection
         )
         SettingsEntry(
-            icon = Icons.Default.Build,
+            icon = Icons.Default.AdminPanelSettings,
             title = "防卸载保护",
-            subtitle = "激活后无法直接卸载或清除数据",
             onClick = onOpenAdmin
-        )
-        SettingsEntry(
-            icon = Icons.Default.Lock,
-            title = "解锁验证",
-            subtitle = "全局默认条件与防绕过",
-            onClick = onOpenVerify
         )
         Spacer(Modifier.height(24.dp))
         Text(
-            "应用锁 v0.4.0",
+            "应用锁 v${com.activitylock.app.BuildConfig.VERSION_NAME}",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier
@@ -185,8 +196,8 @@ fun SettingsScreen(
 private fun SettingsGroup(title: String) {
     Text(
         title,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onSurface,
         modifier = Modifier.padding(start = 16.dp, top = 14.dp, bottom = 4.dp)
     )
 }
@@ -195,7 +206,7 @@ private fun SettingsGroup(title: String) {
 private fun SettingsEntry(
     icon: ImageVector,
     title: String,
-    subtitle: String,
+    subtitle: String? = null,
     onClick: () -> Unit,
 ) {
     Card(
@@ -226,14 +237,17 @@ private fun SettingsEntry(
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.titleSmall)
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                )
+                // 副标题默认不渲染：标题本身已说明功能，附注反而添乱
+                if (subtitle != null) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                }
             }
             Icon(
                 Icons.AutoMirrored.Filled.KeyboardArrowRight,

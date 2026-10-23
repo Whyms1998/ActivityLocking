@@ -71,15 +71,25 @@ fun ActivityToggleRow(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var busy by remember(key) { mutableStateOf(false) }
-    var locked by remember(key) { mutableStateOf(AppStore.isDisabled(packageName, cls)) }
-    var mode by remember(key) { mutableStateOf("pm") }
+    // ★ 初始锁定态必须按「规则口径」判定，不能只看组件启用状态：
+    //   block 模式（系统级拦截）不会去禁用组件，AppStore.isDisabled() 恒为 false，
+    //   结果已拦截的界面在这个列表里被显示成「正常」、开关也是关的，
+    //   与收藏夹里的实际状态自相矛盾。口径对齐 FavoritesScreen：
+    //   block → 看 rule.locked；组件禁用模式 → 看组件状态。
+    var locked by remember(key) {
+        mutableStateOf(
+            rule?.let { if (it.block) it.locked else AppStore.isDisabled(packageName, cls) } ?: false
+        )
+    }
+    var mode by remember(key) { mutableStateOf(if (rule?.block == true) "block" else "pm") }
     var redirect by remember(key) {
         mutableStateOf(rule?.redirectUri)
     }
     var confirmLock by remember { mutableStateOf(false) }
     var vMode by remember(confirmLock) { mutableStateOf(rule?.verifyMode) }
-    var vDelay by remember(confirmLock) {
-        mutableStateOf(((rule?.verifyDelaySec ?: VerifyGate.delaySeconds(context))).toString())
+    // ★ v1.24.9：等待秒数改 Int（输入框统一为 [DurationField]，草稿由组件自管）
+    var vDelaySec by remember(confirmLock) {
+        mutableStateOf(rule?.verifyDelaySec ?: VerifyGate.delaySeconds(context))
     }
     var vPwd by remember(confirmLock) { mutableStateOf(rule?.verifyPassword ?: "") }
     var vQuizCount by remember(confirmLock) {
@@ -88,7 +98,8 @@ fun ActivityToggleRow(
     val globalReq = VerifyGate.globalRequirement(context)
     val globalDesc = when (globalReq.mode) {
         VerifyGate.MODE_NONE -> "已关闭"
-        VerifyGate.METHOD_DELAY -> "等待" + globalReq.delaySec + "秒"
+        // ★ v1.24.9：等待可填秒/分/小时，读数统一走 relockDelayLabel
+        VerifyGate.METHOD_DELAY -> "等待" + relockDelayLabel(globalReq.delaySec)
         VerifyGate.METHOD_QUIZ -> "答题"
         else -> "密码"
     }
@@ -161,7 +172,7 @@ fun ActivityToggleRow(
                 )
                 Text(
                     when {
-                        locked && mode == "block" && redirect != null -> "🚫 拦截模式 · 点图标直达搜索页"
+                        locked && mode == "block" && redirect != null -> "🚫 拦截模式（点图标直达搜索页）"
                         locked && mode == "block" -> "🚫 拦截模式（启动即拦截）"
                         locked -> "🔒 已禁用"
                         else -> "正常"
@@ -190,7 +201,7 @@ fun ActivityToggleRow(
             packageName = packageName,
             isLauncher = isLauncher,
             vModeInit = vMode,
-            vDelayInit = vDelay.trim().toIntOrNull(),
+            vDelayInit = vDelaySec,
             vPwdInit = vPwd,
             vQuizCountInit = vQuizCount.trim().toIntOrNull(),
             onConfirm = { redirectUri, vm, vd, vp, vqc, rd, lu ->
@@ -269,7 +280,7 @@ private fun LockLauncherDialog(
     val warning = remember(uri, packageName) { validateRedirectTarget(context, packageName, uri.trim()) }
     // 历史数据里的「无需验证」按跟随全局处理（该选项已移除）
     var vMode by remember { mutableStateOf(vModeInit?.takeIf { it != VerifyGate.MODE_NONE }) }
-    var vDelay by remember { mutableStateOf((vDelayInit ?: VerifyGate.delaySeconds(context)).toString()) }
+    var vDelaySec by remember { mutableStateOf(vDelayInit ?: VerifyGate.delaySeconds(context)) }
     var vPwd by remember { mutableStateOf(vPwdInit ?: "") }
     var vQuizCount by remember { mutableStateOf((vQuizCountInit ?: VerifyGate.quizCount(context)).toString()) }
     var vRandomDigits by remember { mutableStateOf(VerifyGate.randomDigits(context).toString()) }
@@ -296,19 +307,13 @@ private fun LockLauncherDialog(
         "锁定至 " + java.text.SimpleDateFormat("M月d日 HH:mm", java.util.Locale.CHINA)
             .format(java.util.Date(untilMs)) + "，到期自动解除"
     else null
-    val globalReq = VerifyGate.globalRequirement(context)
-    val globalDesc = when (globalReq.mode) {
-        VerifyGate.MODE_NONE -> "已关闭"
-        VerifyGate.METHOD_DELAY -> "等待" + globalReq.delaySec + "秒"
-        VerifyGate.METHOD_QUIZ -> "答题" + globalReq.quizCount + "题"
-        VerifyGate.METHOD_RANDOM -> "随机密码" + globalReq.randomDigits + "位"
-        else -> "密码"
-    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (isLauncher) "锁定桌面入口" else "锁定该界面") },
         text = {
+            // ★ 跳转目标输入框会唤起键盘 → 让 Dialog window 随键盘收缩，底部按钮不被遮挡
+            com.activitylock.app.ui.components.DialogImeResize()
             Column(
                 Modifier.verticalScroll(rememberScrollState())
             ) {
@@ -373,13 +378,12 @@ private fun LockLauncherDialog(
                 Spacer(Modifier.height(12.dp))
                 UnlockConditionEditor(
                     mode = vMode,
-                    delaySec = vDelay.trim().toIntOrNull() ?: VerifyGate.delaySeconds(context),
+                    delaySec = vDelaySec,
                     password = vPwd,
                     quizCount = vQuizCount.trim().toIntOrNull() ?: VerifyGate.quizCount(context),
                     randomDigits = vRandomDigits.trim().toIntOrNull() ?: VerifyGate.randomDigits(context),
-                    globalDesc = globalDesc,
                     onModeChange = { vMode = it },
-                    onDelayChange = { vDelay = it.toString() },
+                    onDelayChange = { vDelaySec = it },
                     onPasswordChange = { vPwd = it },
                     onQuizCountChange = { vQuizCount = it.toString() },
                     onRandomDigitsChange = { vRandomDigits = it.toString() },
@@ -415,7 +419,7 @@ private fun LockLauncherDialog(
                 onConfirm(
                     redirectUri,
                     vMode,
-                    vDelay.trim().toIntOrNull(),
+                    vDelaySec,
                     vPwd,
                     vQuizCount.trim().toIntOrNull(),
                     vRandomDigits.trim().toIntOrNull() ?: 6,

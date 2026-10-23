@@ -192,12 +192,13 @@ fun HistoryScreen(onBack: () -> Unit) {
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
+                                        // ★ 规范 §1：原来是「14:22 · 锁定 · 拦截」——三段并列无标签，
+                                        //   最容易读错的是"哪个词对应哪个位置"。改成「时间 + 动作（模式）」。
                                         buildString {
                                             append(timeFmt.format(Date(h.time)))
-                                            append(" · ")
+                                            append("  ")
                                             append(if (h.action == "LOCK") "锁定" else "解锁")
-                                            append(" · ")
-                                            append(if (h.mode == "block") "拦截" else "组件")
+                                            append(if (h.mode == "block") "（拦截）" else "")
                                         },
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -210,7 +211,27 @@ fun HistoryScreen(onBack: () -> Unit) {
                                 if (!isFav) {
                                     TextButton(onClick = {
                                         scope.launch {
-                                            LockEngine.apply(h.packageName, h.activityName, true)
+                                            // ★ 重新锁定必须带上跳转目标，否则「删除 → 从历史找回」
+                                            //   会把「点图标跳搜索页」退化成「静默拦截」。
+                                            //   历史里没有记录（旧版本数据）时，按**内置方案里
+                                            //   同一 (包名, 界面) 的目标**兜底 —— 不能盲目用
+                                            //   SchemePresets.suggestFor(pkg)：像微信这种包里
+                                            //   含多个深链，会把「纯拦截朋友圈」误改成「跳扫一扫」。
+                                            val recorded = h.redirectUri
+                                            val builtin = com.activitylock.app.core.BuiltinPresets.all
+                                                .firstOrNull {
+                                                    it.packageName == h.packageName &&
+                                                        it.activityName == h.activityName
+                                                }?.redirectUri
+                                            val uri = recorded ?: builtin
+                                            LockEngine.apply(h.packageName, h.activityName, true, uri)
+                                            AppStore.toast(
+                                                when {
+                                                    recorded != null -> "已重新锁定：点图标直达搜索页"
+                                                    builtin != null -> "已重新锁定，并按内置方案恢复跳转：$builtin"
+                                                    else -> "已重新锁定（该条目为纯拦截，无跳转）"
+                                                }
+                                            )
                                             refreshTick++
                                         }
                                     }) { Text("锁定") }

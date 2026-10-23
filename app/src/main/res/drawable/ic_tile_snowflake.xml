@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  快捷磁贴图标：雪花 = 「全部锁闭」（一键把所有受管辖界面重新冻住）。
+  六轴雪花：三根穿过圆心的主轴（0°/60°/120°）+ 每根轴末端的两个分叉 + 中心圆，
+  全部用 stroke 描边、round cap，24dp 视口内铺满，视觉重心与既有锁定图标一致。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <group>
+        <!-- 三根主轴：竖直、以及 ±60° 斜轴。端点留出 2.2 半径避免超出视口 -->
+        <path
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.7"
+            android:strokeLineCap="round"
+            android:pathData="M12,2.2 L12,21.8" />
+        <path
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.7"
+            android:strokeLineCap="round"
+            android:pathData="M3.5,6.9 L20.5,17.1" />
+        <path
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.7"
+            android:strokeLineCap="round"
+            android:pathData="M3.5,17.1 L20.5,6.9" />
+
+        <!-- 竖直轴的两个末端分叉 -->
+        <path
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.7"
+            android:strokeLineCap="round"
+            android:pathData="M12,2.2 L9.6,4.6" />
+        <path
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.7"
+            android:strokeLineCap="round"
+            android:pathData="M12,2.2 L14.4,4.6" />
+        <path
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.7"
+            android:strokeLineCap="round"
+            android:pathData="M12,21.8 L9.6,19.4" />
+        <path
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.7"
+            android:strokeLineCap="round"
+            android:pathData="M12,21.8 L14.4,19.4" />
+
+        <!-- 左下—右上斜轴的两个末端分叉 -->
+        <path
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.7"
+            android:strokeLineCap="round"
+            android:pathData="M3.5,6.9 L6.8,7.7" />
+        <path
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.7"
+            android:strokeLineCap="round"
+            android:pathData="M3.5,6.9 L4.3,10.2" />
+        <path
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.7"
+            android:strokeLineCap="round"
+            android:pathData="M20.5,17.1 L17.2,16.3" />
+        <path
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.7"
+            android:strokeLineCap="round"
+            android:pathData="M20.5,17.1 L19.7,13.8" />
+
+        <!-- 左上—右下斜轴的两个末端分叉 -->
+        <path
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.7"
+            android:strokeLineCap="round"
+            android:pathData="M3.5,17.1 L4.3,13.8" />
+        <path
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.7"
+            android:strokeLineCap="round"
+            android:pathData="M3.5,17.1 L6.8,16.3" />
+        <path
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.7"
+            android:strokeLineCap="round"
+            android:pathData="M20.5,6.9 L19.7,10.2" />
+        <path
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.7"
+            android:strokeLineCap="round"
+            android:pathData="M20.5,6.9 L17.2,7.7" />
+
+        <!-- 中心小圆，强化雪花交点 -->
+        <path
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="1.7"
+            android:fillColor="#00000000"
+            android:pathData="M12,10.6 A1.4,1.4 0 1,1 11.99,10.6" />
+    </group>
+</vector>

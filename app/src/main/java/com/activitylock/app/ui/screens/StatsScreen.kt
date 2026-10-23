@@ -50,7 +50,7 @@ import java.text.SimpleDateFormat
 /** 拦截统计：今日拦截大数字为全屏唯一焦点，分 App 明细按超额状态着色。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun StatsScreen(onBack: () -> Unit) {
+fun StatsScreen(onBack: () -> Unit, bottomTab: Boolean = false) {
     val ctx = LocalContext.current
     var stats by remember { mutableStateOf<BlockStats.Stats?>(null) }
     var refreshTick by remember { mutableIntStateOf(0) }
@@ -65,8 +65,11 @@ fun StatsScreen(onBack: () -> Unit) {
             TopAppBar(
                 title = { Text("拦截统计", style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    // 作为底部 tab 一级页时不显示返回箭头（去掉自指的死循环）
+                    if (!bottomTab) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        }
                     }
                 },
                 actions = {
@@ -149,8 +152,8 @@ fun StatsScreen(onBack: () -> Unit) {
                 item {
                     Text(
                         "近 7 天",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
                     )
                     Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
@@ -200,8 +203,8 @@ fun StatsScreen(onBack: () -> Unit) {
                     item {
                         Text(
                             "分 App（今日）",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
                         )
                     }
@@ -216,8 +219,9 @@ fun StatsScreen(onBack: () -> Unit) {
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(
+                                        // ★ 规范 §1：原来 "应用名 · 已超额" 用中点串状态 → 括号
                                         (AppStore.findApp(pkg)?.label ?: pkg.substringAfterLast('.'))
-                                            + if (isOver) " · 已超额" else "",
+                                            + if (isOver) "（已超额）" else "",
                                         style = MaterialTheme.typography.titleSmall,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,

@@ -57,14 +57,7 @@ class FocusService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun ensureChannel() {
-        val nm = getSystemService(NotificationManager::class.java)
-        if (nm.getNotificationChannel(CHANNEL_ID) == null) {
-            nm.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "专注会话", NotificationManager.IMPORTANCE_LOW)
-            )
-        }
-    }
+    private fun ensureChannel() = ensureChannel(applicationContext)
 
     private fun buildNotification(remainingMin: Int?): Notification {
         ensureChannel()
@@ -84,8 +77,26 @@ class FocusService : Service() {
     }
 
     companion object {
-        private const val CHANNEL_ID = "focus_session"
-        private const val NOTIFY_ID = 3002
+        /** 通知渠道名。FocusEngine 的结束提示也复用它——渠道是持久化的，
+         *  即使服务已停止，只要渠道建过一次就能发通知。 */
+        const val CHANNEL_ID = "focus_session"
+
+        // ★ 通知 id 全局唯一分配表（避免两个前台服务互相顶掉通知）：
+        //   QuotaService 2001/2002 · AutoFreezeService 3001 · AutoRelockService 3002
+        //   · FocusService 3003 · FocusEngine 结束提示 3004
+        //   旧值 3002 与 AutoRelockService 撞车：专注与自动锁闭同时守护时，
+        //   后发的通知会覆盖前一个，导致某一方的前台通知"消失"。
+        private const val NOTIFY_ID = 3003
+
+        /** 幂等创建渠道，供其它组件在服务未启动时也能正常发通知。 */
+        fun ensureChannel(ctx: Context) {
+            val nm = ctx.getSystemService(NotificationManager::class.java)
+            if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+                nm.createNotificationChannel(
+                    NotificationChannel(CHANNEL_ID, "专注会话", NotificationManager.IMPORTANCE_LOW)
+                )
+            }
+        }
 
         fun start(ctx: Context) {
             runCatching { ctx.startForegroundService(Intent(ctx, FocusService::class.java)) }

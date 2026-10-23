@@ -17,9 +17,18 @@ object UsageTracker {
 
     fun hasPermission(ctx: Context): Boolean {
         val appOps = ctx.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-        val mode = appOps.unsafeCheckOpNoThrow(
-            AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), ctx.packageName
-        )
+        // ★ unsafeCheckOpNoThrow 是 API 29 新增；minSdk=26，低版本必须回退 checkOpNoThrow，
+        //   否则在 Android 8/9 上抛 NoSuchMethodError（QuotaService 主循环会直接崩）。
+        val mode = if (android.os.Build.VERSION.SDK_INT >= 29) {
+            appOps.unsafeCheckOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), ctx.packageName
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            appOps.checkOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), ctx.packageName
+            )
+        }
         return mode == AppOpsManager.MODE_ALLOWED
     }
 

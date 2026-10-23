@@ -88,11 +88,12 @@ fun ConnectionScreen(onBack: () -> Unit) {
                 Column(Modifier.padding(16.dp)) {
                     Text("使用步骤", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
+                    // ★ 规范 §1：这里的 `·` 是当项目符号用，弱且和"中点连接"混淆 → 换成正经的圆点 bullet
                     Text(
                         "1. 安装 Shizuku（应用商店或 GitHub：rikkaapps/Shizuku）。\n" +
                             "2. 启动 Shizuku：\n" +
-                            "   · 无线调试：开发者选项 → 无线调试 → 配对（Shizuku 内有引导）。\n" +
-                            "   · 连接电脑：adb shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh\n" +
+                            "   • 无线调试：开发者选项 → 无线调试 → 配对（Shizuku 内有引导）。\n" +
+                            "   • 连接电脑：adb shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh\n" +
                             "3. 在本页点击「申请授权」。\n" +
                             "4. 回到「应用」页，搜索并锁定目标界面。\n\n" +
                             "拦截控制器是系统全局唯一的，与其他同类工具不能同时生效，后启动者会接管。",

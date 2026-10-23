@@ -31,11 +31,52 @@ object VerifyGate {
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
 
+    /**
+     * 「应用级解锁条件」的来源，由 [AppStore] 在 init 时注入。
+     *
+     * ★ 为什么不直接持有 RuleStore：本类的调用点极多（磁贴、临时解锁、
+     *   场景、收藏夹、自动锁闭页…）且都是静态调用，用 provider 注入可以
+     *   一次性拿到三级优先级链，无需改动全部调用点；返回 null 表示该应用
+     *   没有设应用级条件（继续跟随全局）。
+     */
+    @Volatile
+    private var appVerifyProvider: ((String) -> AppVerify?)? = null
+
+    fun bindAppVerifyProvider(p: (String) -> AppVerify?) {
+        appVerifyProvider = p
+    }
+
     fun isEnabled(ctx: Context): Boolean = prefs(ctx).getBoolean("enabled", false)
 
     fun method(ctx: Context): String = prefs(ctx).getString("method", METHOD_DELAY)!!
 
     fun delaySeconds(ctx: Context): Int = prefs(ctx).getInt("delay_sec", 5)
+
+    /**
+     * 等待时长的**防溢出**上限（约 3 年）。
+     *
+     * ★ v1.24.9：这里刻意不是"业务范围"。用户明确要求
+     *   「不要范围设定在 5～3600 秒，秒 / 分 / 时可以自由选择输入」，
+     *   所以 UI 一律不 clamp；数据层只保留这一个防止 `Int` 溢出的天花板，
+     *   与 [com.activitylock.app.ui.components.MAX_DURATION_SEC] 同口径。
+     */
+    const val MAX_DELAY_SEC = 100_000_000
+
+    /** 把任意输入收敛到可安全存储的等待秒数（下限 1 秒：0 秒等于没设等待）。 */
+    fun safeDelaySec(sec: Int): Int = sec.coerceIn(1, MAX_DELAY_SEC)
+
+    /**
+     * 等待倒计时的文案。
+     *
+     * ★ 为什么需要它：等待时长放开到「任意数字」后，原来那句 `$remaining 秒后可解锁`
+     *   会变成 `7200 秒后可解锁` —— 数字本身已经失去可读性。
+     *   按量级切换：不足 1 分钟 → `45 秒`；不足 1 小时 → `12 分 30 秒`；否则 → `2 小时 0 分`。
+     */
+    fun delayCountdownLabel(sec: Int): String = when {
+        sec < 60 -> "$sec 秒"
+        sec < 3600 -> "${sec / 60} 分 ${sec % 60} 秒"
+        else -> "${sec / 3600} 小时 ${(sec % 3600) / 60} 分"
+    }
 
     fun password(ctx: Context): String = prefs(ctx).getString("password", "") ?: ""
 
@@ -44,7 +85,8 @@ object VerifyGate {
             .putBoolean("enabled", enabled)
             .putString("method", method)
             .putString("password", password)
-            .putInt("delay_sec", delaySec)
+            // ★ v1.24.9：只做防溢出，不再钉死 5–3600（用户要求自由输入）
+            .putInt("delay_sec", safeDelaySec(delaySec))
             .putInt("quiz_count", quizCount.coerceIn(1, 10))
             .apply()
     }
@@ -116,53 +158,98 @@ object VerifyGate {
             val pwd = password(ctx)
             when {
                 method(ctx) == METHOD_PASSWORD && pwd.isBlank() ->
-                    Requirement(METHOD_DELAY, delaySeconds(ctx).coerceAtLeast(1), emptyList())
+                    // 选了「密码」却没填密码 → 退回等待（用全局设置的秒数）
+                    Requirement(METHOD_DELAY, safeDelaySec(delaySeconds(ctx)), emptyList())
                 method(ctx) == METHOD_QUIZ ->
                     Requirement(METHOD_QUIZ, 0, emptyList(), quizCount = quizCount(ctx))
                 method(ctx) == METHOD_RANDOM ->
                     Requirement(METHOD_RANDOM, 0, emptyList(), randomDigits = randomDigits(ctx))
                 else ->
-                    Requirement(method(ctx), delaySeconds(ctx).coerceIn(5, 3600), listOf(pwd))
+                    // ★ v1.24.9：不再 coerceIn(5, 3600) —— 用户可自由填秒/分/小时
+                    Requirement(method(ctx), safeDelaySec(delaySeconds(ctx)), listOf(pwd))
             }
         } else Requirement(MODE_NONE, 0, emptyList())
 
     /**
-     * 某条规则的有效解锁条件：
-     * 规则未单独设置（verifyMode=null）→ 跟随全局；
-     * 单独设置 none/delay/password/quiz → 以规则为准（未填参数时回退全局参数）。
+     * 某条规则的有效解锁条件，**三级优先级**解析：
+     *
+     *   界面级（[LockRule.verifyMode]） > 应用级（[AppVerify]） > 全局
+     *
+     * 每一层「未设置（null）」就下探一层；命中哪一层就用哪一层的参数
+     * （该层参数缺失时按该层规则回退，例如选了「密码」但没填密码 → 退回等待）。
+     *
+     * ★ 是**择一**而不是叠加：界面级显式设了「等待 5 秒」，就不会再被全局的
+     *   「密码」盖住。旧实现在批量场景里无条件叠加全局条件，导致
+     *   「明明给这个界面单独设了等待，解锁却还要输密码」——见 [bulkRequirement]。
      */
     fun requirementFor(ctx: Context, rule: LockRule?): Requirement {
-        val ruleMode = rule?.verifyMode
-        val mode = when (ruleMode) {
-            MODE_NONE -> MODE_NONE
-            METHOD_DELAY -> METHOD_DELAY
-            METHOD_PASSWORD -> METHOD_PASSWORD
-            METHOD_QUIZ -> METHOD_QUIZ
-            else -> return globalRequirement(ctx)
+        if (rule != null && rule.verifyMode != null) {
+            return buildFrom(ctx, rule.verifyMode, rule.verifyDelaySec, rule.verifyPassword, rule.quizCount)
         }
-        if (mode == MODE_NONE) return Requirement(MODE_NONE, 0, emptyList())
-        if (mode == METHOD_QUIZ) return Requirement(METHOD_QUIZ, 0, emptyList(), rule?.quizCount ?: quizCount(ctx))
-        if (mode == METHOD_RANDOM) return Requirement(METHOD_RANDOM, 0, emptyList(), randomDigits = randomDigits(ctx))
-        val delaySec = (rule?.verifyDelaySec ?: delaySeconds(ctx)).coerceIn(5, 3600)
-        val pwd = rule?.verifyPassword?.takeIf { it.isNotBlank() } ?: password(ctx)
-        return if (mode == METHOD_PASSWORD && pwd.isBlank()) {
-            // 规则选了密码但没填密码、全局也没密码 → 退化为等待
-            Requirement(METHOD_DELAY, delaySec, emptyList())
-        } else {
-            Requirement(mode, delaySec, listOf(pwd))
+        val av = rule?.packageName?.let { appVerifyProvider?.invoke(it) }
+        if (av != null && av.verifyMode != null) {
+            return buildFrom(ctx, av.verifyMode, av.verifyDelaySec, av.verifyPassword, av.quizCount)
         }
+        return globalRequirement(ctx)
     }
 
     /**
-     * 批量操作（磁贴「全部解锁」）的条件：取所有相关界面的最强要求——
-     * 密码 > 答题 > 等待；密码可接受其中任意一个，等待取最长。
-     * 防止绕过：给某界面单独设了密码，磁贴不能只用全局倒计时放过它。
+     * 把某一层的 (mode + 参数) 解析为 [Requirement]。
+     *
+     * 注：`METHOD_RANDOM` 的位数、`METHOD_QUIZ` 的题数若该层没填，回退到全局设置。
+     */
+    private fun buildFrom(
+        ctx: Context,
+        mode: String?,
+        delaySec: Int?,
+        pwd: String?,
+        quiz: Int?,
+    ): Requirement = when (mode) {
+        MODE_NONE -> Requirement(MODE_NONE, 0, emptyList())
+        METHOD_QUIZ -> Requirement(METHOD_QUIZ, 0, emptyList(), quizCount = quiz ?: quizCount(ctx))
+        METHOD_RANDOM -> Requirement(METHOD_RANDOM, 0, emptyList(), randomDigits = randomDigits(ctx))
+        METHOD_DELAY, METHOD_PASSWORD -> {
+            // ★ v1.24.9：只防溢出，不再钉死 5–3600（界面/应用/全局三层同口径）
+            val d = safeDelaySec(delaySec ?: delaySeconds(ctx))
+            val p = pwd?.takeIf { it.isNotBlank() } ?: password(ctx)
+            if (mode == METHOD_PASSWORD && p.isBlank()) Requirement(METHOD_DELAY, d, emptyList())
+            else Requirement(mode, d, listOf(p))
+        }
+        // 未知 / null → 回到全局（防御旧数据里出现非法 mode）
+        else -> globalRequirement(ctx)
+    }
+
+    /**
+     * 某个应用**应用级**的有效解锁条件（不含界面级覆盖）：
+     * 应用级设置了就用应用级，否则跟随全局。
+     *
+     * 供「应用级解锁条件」编辑框回填 / 比对使用。
+     */
+    fun appLevelRequirement(ctx: Context, pkg: String): Requirement {
+        val av = appVerifyProvider?.invoke(pkg)
+        if (av != null && av.verifyMode != null) {
+            return buildFrom(ctx, av.verifyMode, av.verifyDelaySec, av.verifyPassword, av.quizCount)
+        }
+        return globalRequirement(ctx)
+    }
+
+    /**
+     * 批量操作（磁贴「全部解锁」、场景解锁、本页关开关的验证）的条件：
+     * 取所有**相关界面各自生效条件**中的最强 ——
+     * 随机密码 > 密码 > 答题 > 等待；密码可接受其中任意一个，等待取最长。
+     *
+     * ★ 修复点（v1.15.0）：不再**无条件叠加** [globalRequirement]。
+     *   旧实现是 `add(globalRequirement(ctx))` + 各规则，于是全局条件等于
+     *   "始终压在所有界面之上"：用户给某界面单独设了「等待 5 秒」，
+     *   批量解锁依旧要求全局的「输入密码」，与"界面级优先"自相矛盾，
+     *   也与 [requirementFor]（单界面解锁走的那条路）的口径不一致。
+     *   现在与 [requirementFor] 完全同口径：每个界面只看它自己的生效条件。
+     *   仅当没有任何已锁界面时才回退到全局条件（否则就成了"无需验证"）。
      */
     fun bulkRequirement(ctx: Context, rules: List<LockRule>): Requirement {
-        val reqs = buildList {
-            add(globalRequirement(ctx))
-            rules.filter { it.locked }.forEach { add(requirementFor(ctx, it)) }
-        }
+        val locked = rules.filter { it.locked }
+        if (locked.isEmpty()) return globalRequirement(ctx)
+        val reqs = locked.map { requirementFor(ctx, it) }
         if (reqs.any { it.mode == METHOD_RANDOM }) {
             return Requirement(METHOD_RANDOM, 0, emptyList(),
                 randomDigits = reqs.filter { it.mode == METHOD_RANDOM }.maxOf { it.randomDigits })
@@ -185,6 +272,16 @@ object VerifyGate {
         return if (maxDelay > 0) Requirement(METHOD_DELAY, maxDelay, emptyList())
         else Requirement(MODE_NONE, 0, emptyList())
     }
+
+    /**
+     * 某个应用下所有**已锁**界面的最强条件 = 「想解锁这个 App 里的任意界面，
+     * 至少要通过哪一关」。
+     *
+     * 自动锁闭页用它把结果直接标在应用卡片上（"本应用按最严执行：输入密码"），
+     * 让用户一眼看到实际门槛，而不是对着几条不同的界面条件猜。
+     */
+    fun bulkRequirementForApp(ctx: Context, rules: List<LockRule>, pkg: String): Requirement =
+        bulkRequirement(ctx, rules.filter { it.packageName == pkg })
 
     /** 条件强度排序：用于判断一次修改是否属于"降低门槛"。 */
     fun strength(mode: String): Int = when (mode) {

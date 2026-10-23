@@ -107,10 +107,11 @@ fun InspectorScreen(onBack: () -> Unit) {
                     Text("使用说明", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "· 开启后，屏幕上方会出现黑色悬浮条，实时显示当前界面的包名和类名\n" +
-                            "· 按住悬浮条可以拖动位置\n" +
-                            "· 点一下悬浮条，会把当前 Activity 复制到剪贴板\n" +
-                            "· 找到想屏蔽的界面后，到「应用」页搜索该类名并锁定即可",
+                        // ★ 规范 §1：这里原来拿 `·` 当项目符号，弱且和中点连接混淆 → 换正经圆点
+                        "• 开启后，屏幕上方会出现黑色悬浮条，实时显示当前界面的包名和类名\n" +
+                            "• 按住悬浮条可以拖动位置\n" +
+                            "• 点一下悬浮条，会把当前 Activity 复制到剪贴板\n" +
+                            "• 找到想屏蔽的界面后，到「应用」页搜索该类名并锁定即可",
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }

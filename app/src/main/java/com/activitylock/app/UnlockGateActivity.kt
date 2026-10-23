@@ -179,7 +179,8 @@ private fun GateCard(
                         }
                     }
                     Text(
-                        if (remaining > 0) "自律提醒：请等待 $remaining 秒后再全部解锁。"
+                        // ★ v1.24.9：等待时长可任意填（秒/分/小时），句子里的读数按量级切换
+                        if (remaining > 0) "自律提醒：请等待 " + VerifyGate.delayCountdownLabel(remaining) + "后再全部解锁。"
                         else "等待完成，可以全部解锁了。",
                         style = MaterialTheme.typography.bodyMedium
                     )

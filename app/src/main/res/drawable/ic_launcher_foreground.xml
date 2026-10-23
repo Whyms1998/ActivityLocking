@@ -1,29 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 门拱 + 钥匙孔：关卡意象，白色线稿居安全区 -->
+<!-- 挂锁图标 v3（v1.24.3）—— 用户反馈链：6.5 实心款"太粗"→ 3.2 线稿款"太细、没设计感"。
+     本版取中间值并做精致化：线宽 4.6（介于两者之间），锁体比例改方正（36x33，1.09:1），
+     圆角 8 更柔和，钥匙孔改用**经典钥匙孔轮廓**（半圆 + 下扩梯形的一条闭合路径），
+     不再是"小圆点 + 短竖"那种潦草感。
+
+     几何（108 画布，视觉中心 54.25）：
+       锁体 36 x 33，圆角 8，线宽 4.6
+       锁梁外径 20（占锁体宽 56%），线宽 4.6，弧圆心 39.5 = 锁体上边(46) 之上 6.5
+       钥匙孔 半圆 r=3.5 + 下扩到宽 10 的梯形，单一闭合轮廓
+     整体 29.5..79，全部落在自适应图标安全区（21..87）内。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- 门拱（描边） -->
+    <!-- 锁梁：U 形（腿伸进锁体，末端圆头） -->
     <path
-        android:pathData="M36,74 v-22 a18,18 0 0 1 36,0 v22"
-        android:strokeColor="#FAFAF7"
-        android:strokeWidth="6"
+        android:pathData="M46.3,52 L46.3,39.5 A7.7,7.7 0 0 1 61.7,39.5 L61.7,52"
+        android:strokeColor="#2C3644"
+        android:strokeWidth="4.6"
         android:strokeLineCap="round"
+        android:strokeLineJoin="round"
         android:fillColor="#00000000" />
-    <!-- 底部门槛 -->
+    <!-- 锁体：线稿圆角矩形 -->
     <path
-        android:pathData="M32,74 h44"
-        android:strokeColor="#FAFAF7"
-        android:strokeWidth="6"
-        android:strokeLineCap="round"
+        android:pathData="M44,46 L64,46 A8,8 0 0 1 72,54 L72,71 A8,8 0 0 1 64,79 L44,79 A8,8 0 0 1 36,71 L36,54 A8,8 0 0 1 44,46 Z"
+        android:strokeColor="#2C3644"
+        android:strokeWidth="4.6"
+        android:strokeLineJoin="round"
         android:fillColor="#00000000" />
-    <!-- 钥匙孔 -->
+    <!-- 钥匙孔：半圆 + 下扩梯形（单一闭合轮廓，无自交） -->
     <path
-        android:pathData="M54,50 m-6,0 a6,6 0 1 1 12,0 a6,6 0 1 1 -12,0"
-        android:fillColor="#FAFAF7" />
-    <path
-        android:pathData="M50,54 h8 l2.5,11 h-13 z"
-        android:fillColor="#FAFAF7" />
+        android:pathData="M50.969,61.75 A3.5,3.5 0 1 1 57.031,61.75 L59,69.5 L49,69.5 Z"
+        android:fillColor="#2C3644" />
 </vector>

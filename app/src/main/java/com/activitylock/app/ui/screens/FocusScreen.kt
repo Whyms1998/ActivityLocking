@@ -35,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,8 +48,11 @@ import com.activitylock.app.core.FocusEngine
 import com.activitylock.app.core.FocusState
 import com.activitylock.app.core.FocusSession
 import com.activitylock.app.core.VerifyGate
+import com.activitylock.app.ui.components.DurationField
+import com.activitylock.app.ui.components.DurationUnit
 import com.activitylock.app.ui.components.UnlockVerifyDialog
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * 专注会话：开始后目标 App 整包临时拦截，到时自动恢复。
@@ -62,7 +66,13 @@ fun FocusScreen(onBack: () -> Unit) {
     var session by remember { mutableStateOf(FocusState.load(ctx)) }
     val lastCfg = remember { FocusState.lastConfig(ctx) }
     var mode by remember { mutableStateOf(lastCfg?.mode ?: "selected") }
-    var durationMin by remember { mutableStateOf(lastCfg?.durationMin ?: 25) }
+    // ★ v1.24.9：专注时长改用全项目统一的 [DurationField]。
+    //   原来是 −/＋ 每次 ±5 分钟、上限 240 —— 想专注 3 小时得点 43 次，
+    //   而且比引擎真正接受的 1–1440 分钟更窄（[FocusSession.start] 校验 1..1440）。
+    //   现在秒存储、分钟/小时自由选，越界只在回显里提示并禁用开始按钮。
+    var durationSec by remember { mutableStateOf((lastCfg?.durationMin ?: 25) * 60) }
+    val durationMin = durationSec / 60
+    val durationOk = durationMin in 1..1440
     var strict by remember { mutableStateOf(lastCfg?.strict ?: true) }
     var selected by remember { mutableStateOf(lastCfg?.members?.toSet() ?: setOf<String>()) }
     var codeDialog by remember { mutableStateOf<String?>(null) } // "gen" | "verify"
@@ -73,6 +83,7 @@ fun FocusScreen(onBack: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var earlyStopVerify by remember { mutableStateOf(false) }
     var remaining by remember { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
 
     // 运行中：每秒刷新剩余时间，到点自动收尾
     LaunchedEffect(session) {
@@ -87,9 +98,15 @@ fun FocusScreen(onBack: () -> Unit) {
 
     fun start() {
         starting = true
-        error = FocusEngine.start(ctx, mode, selected, durationMin, strict)
-        starting = false
-        if (error == null) session = FocusState.load(ctx)
+        scope.launch {
+            // ★ FocusEngine.start 已改为 suspend 并在内部切到 IO：
+            //   whitelist 模式要枚举全部已安装应用，再对每个目标包跑一次
+            //   Shizuku force-stop，原来直接在点击回调（主线程）里跑会 ANR。
+            val err = FocusEngine.start(ctx, mode, selected, durationMin, strict)
+            error = err
+            starting = false
+            if (err == null) session = FocusState.load(ctx)
+        }
     }
 
     fun endEarly() {
@@ -114,7 +131,12 @@ fun FocusScreen(onBack: () -> Unit) {
         val s = session
         if (s != null) {
             // —— 会话进行中 ——
-            val remainingSec = ((s.endAt - System.currentTimeMillis()) / 1000).toInt().coerceAtLeast(0)
+            // ★ 显示值必须读 remaining 这个 state（由上面的 LaunchedEffect 每秒写入），
+            //   写入才会触发重组。原实现把时间差重算一遍、从不读 remaining，
+            //   导致每秒的写入无人消费 → 倒计时与进度在界面上完全静止。
+            //   remaining 尚未被初始化（首帧/刚切换会话）时回退为实时计算，避免闪 00:00。
+            val remainingSec = remaining.takeIf { it > 0 }
+                ?: ((s.endAt - System.currentTimeMillis()) / 1000).toInt().coerceAtLeast(0)
             val remainingMin = remainingSec / 60
             val remainingSecPart = remainingSec % 60
             val progress = (remainingSec.toFloat() / (s.durationMin * 60)).coerceIn(0f, 1f)
@@ -131,7 +153,8 @@ fun FocusScreen(onBack: () -> Unit) {
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    if (s.mode == "whitelist") "白名单模式 · ${s.targets.size} 个 App 已拦截"
+                    // ★ 规范 §1：原来「白名单模式 · N 个 App 已拦截」是中点串两个维度
+                    if (s.mode == "whitelist") "白名单模式，已拦截 ${s.targets.size} 个 App"
                     else "已拦截 ${s.targets.size} 个 App",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -180,19 +203,16 @@ fun FocusScreen(onBack: () -> Unit) {
                 }
                 Spacer(Modifier.height(16.dp))
                 Text("时长", style = MaterialTheme.typography.titleSmall)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(top = 4.dp)
-                ) {
-                    TextButton(onClick = { durationMin = (durationMin - 5).coerceAtLeast(5) }) { Text("−") }
-                    Text(
-                        "$durationMin 分钟",
-                        style = MaterialTheme.typography.titleLarge
-                            .copy(fontFeatureSettings = "tnum"),
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    )
-                    TextButton(onClick = { durationMin = (durationMin + 5).coerceAtMost(240) }) { Text("＋") }
-                }
+                DurationField(
+                    seconds = durationSec,
+                    onChange = { durationSec = it },
+                    units = listOf(DurationUnit.MIN, DurationUnit.HOUR),
+                    modifier = Modifier.padding(top = 4.dp),
+                    equivalent = { sec ->
+                        if (sec / 60 !in 1..1440) "时长需在 1 分钟 – 24 小时之间"
+                        else "专注 " + relockDelayLabel(sec) + "，到时自动恢复"
+                    },
+                )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(checked = strict, onCheckedChange = { want ->
                         when {
@@ -275,10 +295,16 @@ fun FocusScreen(onBack: () -> Unit) {
                 }
                 Button(
                     onClick = { start() },
-                    enabled = !starting && selected.isNotEmpty(),
+                    // 时长超出引擎接受范围（1–1440 分钟）时禁用，回显里已说明原因
+                    enabled = !starting && selected.isNotEmpty() && durationOk,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(if (starting) "启动中…" else "开始专注 $durationMin 分钟")
+                    Text(
+                        if (starting) "启动中…"
+                        else "开始专注 " + relockDelayLabel(durationSec),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }

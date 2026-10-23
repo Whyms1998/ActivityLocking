@@ -33,7 +33,9 @@ object SearchShortcuts {
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 val builder = ShortcutInfoCompat.Builder(ctx, "search_$pkg")
                     .setShortLabel("${label}搜索")
-                    .setLongLabel("${label} · 搜索直达")
+                    // ★ 规范 §1：原来 "小红书 · 搜索直达"——桌面快捷方式标签空间很紧，
+                    //   且 shortLabel 已是「小红书搜索」的紧贴写法 → longLabel 保持同构
+                    .setLongLabel("${label}搜索直达")
                     .setIntent(intent)
                 if (icon != null) builder.setIcon(IconCompat.createWithBitmap(icon.asAndroidBitmap()))
                 ShortcutManagerCompat.requestPinShortcut(ctx, builder.build(), null)

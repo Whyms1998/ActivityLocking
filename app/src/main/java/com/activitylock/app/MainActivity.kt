@@ -8,6 +8,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Settings
@@ -33,6 +34,7 @@ import com.activitylock.app.ui.screens.QuotaScreen
 import com.activitylock.app.ui.screens.ScheduleScreen
 import com.activitylock.app.ui.screens.SceneScreen
 import com.activitylock.app.ui.screens.AdminScreen
+import com.activitylock.app.ui.screens.AutoRelockScreen
 import com.activitylock.app.ui.screens.LockStrengthScreen
 import com.activitylock.app.ui.screens.FocusScreen
 import com.activitylock.app.ui.screens.StatsScreen
@@ -57,7 +59,9 @@ sealed interface Screen {
     data object Focus : Screen
     data object Admin : Screen
     data object LockStrength : Screen
+    data object AutoRelock : Screen
     data class Detail(val packageName: String) : Screen
+    /** 界面详情页（文档 §14.5）：单个 Activity 的自动锁闭 + 解锁验证。 */
 }
 
 class MainActivity : ComponentActivity() {
@@ -112,6 +116,12 @@ private fun AppRoot() {
                         label = { Text("应用") }
                     )
                     NavigationBarItem(
+                        selected = current is Screen.Stats,
+                        onClick = { switchTab(stack, Screen.Stats, current) },
+                        icon = { Icon(Icons.Default.BarChart, contentDescription = null) },
+                        label = { Text("统计") }
+                    )
+                    NavigationBarItem(
                         selected = current is Screen.Settings,
                         onClick = { switchTab(stack, Screen.Settings, current) },
                         icon = { Icon(Icons.Default.Settings, contentDescription = null) },
@@ -123,12 +133,10 @@ private fun AppRoot() {
     ) { padding ->
         Box(Modifier.padding(padding)) {
             when (val screen = current) {
+                // ★ v1.20.0：工作台删掉了方案/计划/限额/统计/锁闭的快捷入口——
+                //   与底部导航和「设置」页重复。低频配置统一从「设置」进。
                 Screen.Favorites -> FavoritesScreen(
                     onOpenApps = { switchTab(stack, Screen.Apps, current) },
-                    onOpenPresets = { stack.add(Screen.Presets) },
-                    onOpenSchedules = { stack.add(Screen.Schedules) },
-                    onOpenQuota = { stack.add(Screen.Quota) },
-                    onOpenStats = { stack.add(Screen.Stats) }
                 )
                 Screen.Apps -> AppsScreen(
                     onOpenDetail = { pkg -> stack.add(Screen.Detail(pkg)) }
@@ -143,10 +151,10 @@ private fun AppRoot() {
                     onOpenSchedules = { stack.add(Screen.Schedules) },
                     onOpenQuota = { stack.add(Screen.Quota) },
                     onOpenScenes = { stack.add(Screen.Scenes) },
-                    onOpenStats = { stack.add(Screen.Stats) },
                     onOpenFocus = { stack.add(Screen.Focus) },
                     onOpenAdmin = { stack.add(Screen.Admin) },
-                    onOpenStrength = { stack.add(Screen.LockStrength) }
+                    onOpenStrength = { stack.add(Screen.LockStrength) },
+                    onOpenAutoRelock = { stack.add(Screen.AutoRelock) }
                 )
                 Screen.Verify -> com.activitylock.app.ui.screens.VerifySettingsScreen(
                     onBack = { stack.removeAt(stack.size - 1) }
@@ -173,7 +181,8 @@ private fun AppRoot() {
                     onBack = { stack.removeAt(stack.size - 1) }
                 )
                 Screen.Stats -> StatsScreen(
-                    onBack = { stack.removeAt(stack.size - 1) }
+                    onBack = { stack.removeAt(stack.size - 1) },
+                    bottomTab = true
                 )
                 Screen.Focus -> FocusScreen(
                     onBack = { stack.removeAt(stack.size - 1) }
@@ -184,14 +193,17 @@ private fun AppRoot() {
                 Screen.LockStrength -> LockStrengthScreen(
                     onBack = { stack.removeAt(stack.size - 1) }
                 )
+                Screen.AutoRelock -> AutoRelockScreen(
+                    onBack = { stack.removeAt(stack.size - 1) },
+                    onOpenVerify = { stack.add(Screen.Verify) }
+                )
                 Screen.Connection -> ConnectionScreen(
                     onBack = { stack.removeAt(stack.size - 1) }
                 )
                 is Screen.Detail -> ActivityListScreen(
                     packageName = screen.packageName,
                     onBack = { stack.removeAt(stack.size - 1) }
-                )
-            }
+                )            }
         }
     }
 }

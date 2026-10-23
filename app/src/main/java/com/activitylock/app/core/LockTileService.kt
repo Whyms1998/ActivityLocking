@@ -9,6 +9,15 @@ import kotlinx.coroutines.runBlocking
 import com.activitylock.app.UnlockGateActivity
 
 /**
+ * `Tile.subtitle` 是 **API 29（Android 10）** 才加入的属性，而本 App 的 minSdk = 26。
+ * 在 API 26~28 上直接赋值会抛 `NoSuchMethodError`（磁贴刷新时崩溃，Lint NewApi 报错）。
+ * 低版本静默跳过即可 —— 副标题只是锦上添花，磁贴的 state / 图标 / 点击都照常工作。
+ */
+internal fun Tile.setSubtitleCompat(text: String) {
+    if (android.os.Build.VERSION.SDK_INT >= 29) subtitle = text
+}
+
+/**
  * 两个快捷磁贴：全部上锁 / 全部解锁。
  */
 abstract class BaseLockTileService : TileService() {
@@ -65,11 +74,11 @@ abstract class BaseLockTileService : TileService() {
         val rules = AppStore.rules
         if (rules.isEmpty()) {
             tile.state = Tile.STATE_INACTIVE
-            tile.subtitle = "未配置"
+            tile.setSubtitleCompat("未配置")
         } else {
             val done = rules.all { it.locked == targetLocked }
             tile.state = if (done) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-            tile.subtitle = if (done) "已生效" else "点击执行"
+            tile.setSubtitleCompat(if (done) "已生效" else "点击执行")
         }
         tile.updateTile()
     }

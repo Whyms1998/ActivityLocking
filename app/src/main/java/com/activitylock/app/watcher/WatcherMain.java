@@ -113,12 +113,46 @@ public class WatcherMain {
         }
     }
 
+    /** 日志体积上限（512KB）。超过则只保留尾部一半，防止 /data/local/tmp 无限增长。 */
+    static final long MAX_LOG_BYTES = 512 * 1024L;
+    /** 写入计数：每 64 次检查一次体积，避免每次写都 stat 文件。 */
+    static volatile int LOG_WRITES = 0;
+
     static void log(String msg) {
         try {
+            java.io.File lf = new java.io.File(LOG_PATH);
+            // ★ v22：体积安全网——reload 短路后正常路径几乎不写文件，
+            //   这里兜住异常/调试路径可能产生的突发写入，保证文件不会无限增长。
+            if ((++LOG_WRITES & 63) == 0 && lf.exists() && lf.length() > MAX_LOG_BYTES) {
+                rotateLog(lf);
+            }
             java.io.PrintWriter w = new java.io.PrintWriter(
                     new java.io.FileWriter(LOG_PATH, true));
             w.println(android.os.SystemClock.currentThreadTimeMillis() + " " + msg);
             w.close();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 保留日志尾部一半内容并前移，使文件体积回落到上限以下。 */
+    static void rotateLog(java.io.File lf) {
+        try {
+            long keep = MAX_LOG_BYTES / 2;
+            long len = lf.length();
+            if (len <= keep) return;
+            java.io.RandomAccessFile raf = new java.io.RandomAccessFile(lf, "rw");
+            try {
+                raf.seek(len - keep);
+                byte[] buf = new byte[(int) keep];
+                int n = raf.read(buf);
+                if (n > 0) {
+                    raf.seek(0);
+                    raf.write(buf, 0, n);
+                    raf.setLength(n);
+                }
+            } finally {
+                raf.close();
+            }
         } catch (Throwable ignored) {
         }
     }
@@ -274,7 +308,10 @@ public class WatcherMain {
                     if (++tick % 5 == 0 && am.pingBinder()) {
                         killOtherWatchers();
                         registerController(am, controller);
-                        log("controller re-registered tick=" + tick);
+                        // ★ v22：周期重注册改为静默执行，仅每 5 分钟打一次心跳
+                        //   （旧实现每 10 秒一条 "controller re-registered"，
+                        //    一天 8640 行纯噪音）
+                        if (tick % 150 == 0) log("watcher alive tick=" + tick);
                     }
                     if (tick % 10 == 0) flushStats();
                     sessionTick();
@@ -310,6 +347,19 @@ public class WatcherMain {
         }
     }
 
+    /**
+     * 上一次成功解析的规则原文。
+     *
+     * ★ v22 新增：内容没变就直接返回。
+     *   旧实现每 2 秒被 updater 调用一次，**无条件**重新解析并打印两行日志
+     *   （其中 `reload file:` 还带 200 字符的 JSON）——一天约 8.6 万行 / 约 10MB，
+     *   `/data/local/tmp/al_watcher.log` 只会无限增长。
+     *   规则只在用户改动设置时才变，所以这一句能把日志量砍掉 99% 以上，
+     *   同时省掉每 2 秒一次的 JSON 解析。
+     *   另配套 log() 的体积轮转（见 MAX_LOG_BYTES），双保险。
+     */
+    static volatile String LAST_RULES_RAW = null;
+
     static void reloadRules() {
         try {
             File f = new File(RULES_PATH);
@@ -321,8 +371,12 @@ public class WatcherMain {
                 sb.append(line);
             }
             r.close();
-            org.json.JSONArray arr = new org.json.JSONArray(sb.toString());
-            log("reload file: " + sb.substring(0, Math.min(sb.length(), 200)));
+            String raw = sb.toString();
+            // ★ 内容未变 → 直接返回，不解析、不写日志
+            if (raw.equals(LAST_RULES_RAW)) return;
+            LAST_RULES_RAW = raw;
+            org.json.JSONArray arr = new org.json.JSONArray(raw);
+            log("reload file: " + raw.substring(0, Math.min(raw.length(), 200)));
             ConcurrentHashMap<String, String> next = new ConcurrentHashMap<>();
             ConcurrentHashMap<String, String> nextPkgs = new ConcurrentHashMap<>();
             ConcurrentHashMap<String, Long> nextUntil = new ConcurrentHashMap<>();

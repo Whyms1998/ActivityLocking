@@ -31,6 +31,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.activitylock.app.core.LockStrength
+import com.activitylock.app.ui.components.DurationPickerDialog
+import com.activitylock.app.ui.screens.relockDelayLabel
 
 /**
  * 锁定强度：临时解锁的时长与次数上限、计划窗口内的豁免禁用——
@@ -40,8 +42,12 @@ import com.activitylock.app.core.LockStrength
 @Composable
 fun LockStrengthScreen(onBack: () -> Unit) {
     val ctx = LocalContext.current
-    var tempMin by remember { mutableStateOf(LockStrength.tempUnlockMin(ctx)) }
+    var tempSec by remember { mutableStateOf(LockStrength.tempUnlockSec(ctx)) }
+    /** ★ v1.24.8：是否正在打开「自定义时长」弹层。 */
+    var showDurationPicker by remember { mutableStateOf(false) }
     var dailyMax by remember { mutableStateOf(LockStrength.tempUnlockDailyMax(ctx)) }
+    /** ★ v1.24.9：次数上限真正生效后，把「今日已用」摆出来，用户才知道还剩几次。 */
+    val usedToday = remember { LockStrength.tempUnlockUsedToday(ctx) }
     var noExemptInSchedule by remember { mutableStateOf(LockStrength.noExemptInSchedule(ctx)) }
 
     Scaffold(
@@ -77,18 +83,40 @@ fun LockStrengthScreen(onBack: () -> Unit) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.height(8.dp))
+                        // ★ v1.24.8：预设后**加一个「自定义」**（用户 2026-10-13 要求）。
+                        //   原来只有 5/10/15/30 四个写死的分钟值，且数据层 `coerceIn(5,30)`
+                        //   把上限钉死在 30 分钟 —— 想临时放行 1 小时根本做不到。
+                        //   现在自定义走统一的 [DurationField]（秒/分/时 + 等效回显）。
+                        // ★ v1.24.9 收口：删掉「30 分」预设 —— 5 个 chip 在 360dp 宽屏上
+                        //   溢出约 6dp，「自定义」被裁掉一半（真机截图证实）。30 分的功能
+                        //   完全被「自定义」覆盖，且用户此前就提过「把 30 分钟换成自定义」。
+                        //   最终一行 = 5 分 / 10 分 / 15 分 / 自定义，约 250dp，留有余量。
+                        val presetsMin = listOf(5, 10, 15)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(5, 10, 15, 30).forEach { m ->
+                            presetsMin.forEach { m ->
                                 FilterChip(
-                                    selected = tempMin == m,
+                                    selected = tempSec == m * 60,
                                     onClick = {
-                                        tempMin = m
-                                        LockStrength.setTempUnlockMin(ctx, m)
+                                        tempSec = m * 60
+                                        LockStrength.setTempUnlockSec(ctx, m * 60)
                                     },
-                                    label = { Text("$m 分") }
+                                    label = { Text("$m 分", maxLines = 1) }
                                 )
                             }
+                            FilterChip(
+                                selected = tempSec !in presetsMin.map { it * 60 },
+                                onClick = { showDurationPicker = true },
+                                label = { Text("自定义", maxLines = 1) }
+                            )
                         }
+                        Spacer(Modifier.height(6.dp))
+                        // 当前生效值常驻显示，避免用户选了预设却不知道到底是多少
+                        Text(
+                            "当前 " + relockDelayLabel(tempSec),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1
+                        )
                     }
                 }
             }
@@ -115,6 +143,20 @@ fun LockStrengthScreen(onBack: () -> Unit) {
                                 )
                             }
                         }
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            when {
+                                dailyMax == 0 -> "已禁用：临时解锁磁贴将不可用"
+                                dailyMax < 0 -> "今日已用 $usedToday 次，不限次数"
+                                usedToday >= dailyMax -> "今日已用 $usedToday / $dailyMax 次，已用完"
+                                else -> "今日已用 $usedToday / $dailyMax 次"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (dailyMax > 0 && usedToday >= dailyMax)
+                                MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.primary,
+                            maxLines = 1
+                        )
                     }
                 }
             }
@@ -152,5 +194,19 @@ fun LockStrengthScreen(onBack: () -> Unit) {
                 )
             }
         }
+    }
+
+    // ★ v1.24.8：自定义时长弹层（秒 / 分钟 / 小时 任意单位、自由输入）
+    if (showDurationPicker) {
+        DurationPickerDialog(
+            title = "自定义临时解锁时长",
+            initialSec = tempSec,
+            onDismiss = { showDurationPicker = false },
+            onConfirm = { sec ->
+                tempSec = sec
+                LockStrength.setTempUnlockSec(ctx, sec)
+                showDurationPicker = false
+            }
+        )
     }
 }

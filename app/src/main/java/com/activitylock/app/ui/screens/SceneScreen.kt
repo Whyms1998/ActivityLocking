@@ -110,7 +110,7 @@ fun SceneScreen(onBack: () -> Unit) {
                                         style = MaterialTheme.typography.titleSmall
                                     )
                                     Text(
-                                        "$memberCount 个应用 · ${if (scene.active) "已启用" else "未启用"}",
+                                        "$memberCount 个应用，${if (scene.active) "已启用" else "未启用"}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -211,6 +211,8 @@ private fun SceneEditorDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial == null) "新建场景" else "编辑场景") },
         text = {
+            // ★ 名称输入框会唤起键盘 → 让 Dialog window 随键盘收缩
+            com.activitylock.app.ui.components.DialogImeResize()
             Column {
                 OutlinedTextField(
                     value = label,

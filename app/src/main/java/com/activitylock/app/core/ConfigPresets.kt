@@ -32,12 +32,19 @@ object BuiltinPresets {
             verified = true, builtin = true,
         ),
         ConfigPreset(
-            "b_douyin", "抖音", "com.ss.android.ugc.aweme", "com.ss.android.ugc.aweme.main.MainActivity",
-            "snssdk1128://search/trending", "屏蔽首页推荐流，点图标直达搜索页；返回键直接退出",
+            // ★ 真机验证（2026-10-13）：桌面图标的启动 Activity 是 .splash.SplashActivity，
+            //   不是 .main.MainActivity。跳转必须配在**入口**上才会被命中。
+            //   另：snssdk1128://search/trending 落的是「抖音热榜」(BulletContainerActivity)，
+            //   真正可输入的搜索页是 snssdk1128://search?keyword= (SearchResultActivity)。
+            "b_douyin", "抖音", "com.ss.android.ugc.aweme", "com.ss.android.ugc.aweme.splash.SplashActivity",
+            "snssdk1128://search?keyword=",
+            "锁桌面入口，点图标直达搜索页（真机验证）。建议再锁主容器 MainActivity 做纯拦截（不填跳转），挡掉返回时的推荐流",
             verified = true, builtin = true,
         ),
         ConfigPreset(
-            "b_weibo", "微博", "com.sina.weibo", "com.sina.weibo.MainTabActivity",
+            // ★ 真机核对（2026-10-13，resolve-activity）：桌面入口是 .SplashActivity，
+            //   不是 .MainTabActivity —— 锁错界面 = 点图标根本不被拦。
+            "b_weibo", "微博", "com.sina.weibo", "com.sina.weibo.SplashActivity",
             "sinaweibo://searchall?q=", "屏蔽首页信息流，点图标直达搜索（锁定前先测试跳转）",
             builtin = true,
         ),
@@ -47,12 +54,14 @@ object BuiltinPresets {
             builtin = true,
         ),
         ConfigPreset(
-            "b_taobao", "淘宝", "com.taobao.taobao", "com.taobao.tao.TBMainActivity",
+            // ★ 真机核对：桌面入口是 com.taobao.tao.welcome.Welcome（TBMainActivity 是内部主容器）
+            "b_taobao", "淘宝", "com.taobao.taobao", "com.taobao.tao.welcome.Welcome",
             "taobao://s.taobao.com/search?q=", "点图标直达搜索路由（锁定前先测试跳转）",
             builtin = true,
         ),
         ConfigPreset(
-            "b_idlefish", "闲鱼", "com.taobao.idlefish", "com.taobao.idlefish.maincontainer.activity.MainActivity",
+            // ★ 真机核对：桌面入口是 com.taobao.fleamarket.home.activity.InitActivity
+            "b_idlefish", "闲鱼", "com.taobao.idlefish", "com.taobao.fleamarket.home.activity.InitActivity",
             "fleamarket://x_search_items?keyword=", "点图标直达搜索（锁定前先测试跳转）",
             builtin = true,
         ),
@@ -72,7 +81,8 @@ object BuiltinPresets {
             builtin = true,
         ),
         ConfigPreset(
-            "b_zhihu", "知乎", "com.zhihu.android", "com.zhihu.android.app.ui.activity.MainActivity",
+            // ★ 真机核对：桌面入口是 .app.ui.activity.LauncherActivity
+            "b_zhihu", "知乎", "com.zhihu.android", "com.zhihu.android.app.ui.activity.LauncherActivity",
             null, "纯拦截：zhihu://search 落地后主容器在上层，不能做跳转",
             builtin = true,
         ),

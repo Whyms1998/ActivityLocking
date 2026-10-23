@@ -128,7 +128,9 @@ fun AppsScreen(onOpenDetail: (String) -> Unit) {
                             packageName = app.packageName,
                             cls = act.cls,
                             title = act.cls.substringAfterLast('.'),
-                            subtitle = "${app.label} · ${act.cls}",
+                            // ★ v1.24.9：原来的「应用名 · 类名」是项目明令禁止的中点连接符，
+                            //   与 SettingsScreen 的「Shizuku：…」对齐改用中文冒号。
+                            subtitle = "${app.label}：${act.cls}",
                             showAppIcon = true
                         )
                     }
@@ -157,8 +159,8 @@ fun AppsScreen(onOpenDetail: (String) -> Unit) {
 private fun SectionHeader(text: String) {
     Text(
         text,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onSurface,
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
     )
 }

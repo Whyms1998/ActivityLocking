@@ -17,7 +17,12 @@ object SchemePresets {
         // —— 核心信息流类 ——
         // 小红书必须带 keyword 参数才会路由到独立搜索页，否则落在首页容器
         SchemePreset("小红书 · 搜索", "xhsdiscover://search/result?keyword=", listOf("com.xingin.matrix")),
-        SchemePreset("抖音 · 搜索", "snssdk1128://search/trending", listOf("com.ss.android.ugc.aweme")),
+        // ★ 真机验证（2026-10-13）：
+        //   snssdk1128://search?keyword=  → SearchResultActivity（搜索页，可输入）
+        //   snssdk1128://search/trending  → BulletContainerActivity（抖音热榜）
+        //   旧版把 trending 标成「搜索」是错的，点开只会进热榜。
+        SchemePreset("抖音 · 搜索", "snssdk1128://search?keyword=", listOf("com.ss.android.ugc.aweme")),
+        SchemePreset("抖音 · 热榜", "snssdk1128://search/trending", listOf("com.ss.android.ugc.aweme")),
         SchemePreset("哔哩哔哩 · 搜索", "bilibili://search?keyword=", listOf("tv.danmaku.bili")),
         SchemePreset("快手 · 搜索", "kwai://search?keyword=", listOf("com.smile.gifmaker")),
         SchemePreset("今日头条 · 搜索", "snssdk143://search?keyword=", listOf("com.ss.android.article.news")),

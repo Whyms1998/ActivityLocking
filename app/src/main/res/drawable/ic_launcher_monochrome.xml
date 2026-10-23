@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 单色层（Android 13+ 主题化图标）。v1.24.3 与 foreground 同步。
+     ★ 必须与 foreground 分开：系统只取 alpha 通道再重新着色。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 锁梁 -->
+    <path
+        android:pathData="M46.3,52 L46.3,39.5 A7.7,7.7 0 0 1 61.7,39.5 L61.7,52"
+        android:strokeColor="#000000"
+        android:strokeWidth="4.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <!-- 锁体 -->
+    <path
+        android:pathData="M44,46 L64,46 A8,8 0 0 1 72,54 L72,71 A8,8 0 0 1 64,79 L44,79 A8,8 0 0 1 36,71 L36,54 A8,8 0 0 1 44,46 Z"
+        android:strokeColor="#000000"
+        android:strokeWidth="4.6"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <!-- 钥匙孔 -->
+    <path
+        android:pathData="M50.969,61.75 A3.5,3.5 0 1 1 57.031,61.75 L59,69.5 L49,69.5 Z"
+        android:fillColor="#000000" />
+</vector>

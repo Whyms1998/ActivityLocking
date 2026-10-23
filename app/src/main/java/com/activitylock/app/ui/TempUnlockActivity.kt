@@ -34,8 +34,10 @@ import androidx.compose.ui.unit.dp
 import com.activitylock.app.core.AmsController
 import com.activitylock.app.core.AppStore
 import com.activitylock.app.core.LockStrength
+import com.activitylock.app.core.ScheduleEngine
 import com.activitylock.app.core.UnlockExemptions
 import com.activitylock.app.core.VerifyGate
+import com.activitylock.app.ui.screens.relockDelayLabel
 import com.activitylock.app.ui.theme.ActivityLockTheme
 
 /**
@@ -47,7 +49,22 @@ class TempUnlockActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppStore.ensureInit(applicationContext)
-        val duration = LockStrength.tempUnlockMin(this)
+        // ★ v1.24.9 修复（一）：全程按**秒**。
+        //   原来读 tempUnlockMin()（= 秒 / 60 的**整数除法**），用户把临时解锁时长
+        //   填成 90 秒，会被砍成 1 分钟放行 —— 正是用户最反感的「静默改写」。
+        val durationSec = LockStrength.tempUnlockSec(this)
+        // ★ v1.24.9 修复（二）：每日次数闸门真正生效。
+        //   此前 tempUnlockAllowed / recordTempUnlock 是死代码，上限形同虚设。
+        val allowed = LockStrength.tempUnlockAllowed(this)
+        val dailyMax = LockStrength.tempUnlockDailyMax(this)
+        val usedToday = LockStrength.tempUnlockUsedToday(this)
+        // ★ v1.24.9 修复（三）：计划窗口闸门。
+        //   「计划窗口内禁用临时解锁」此前只在 AmsController 下发规则时抑制豁免 ——
+        //   验证页照常放行：用户走完验证、看到「解锁全部 N 个界面」，
+        //   但 Watcher 一个都不放（假动作），回到桌面点 App 仍被拦。
+        //   现在与次数闸门同级，进门即拦。
+        val planBlocked = LockStrength.noExemptInSchedule(this) &&
+            ScheduleEngine.anyActive(AppStore.schedules)
         val lockedRules = AppStore.rules.filter { it.locked }
         val lockedCount = lockedRules.size
         val memberReq = VerifyGate.bulkRequirement(this, lockedRules)
@@ -74,13 +91,29 @@ class TempUnlockActivity : ComponentActivity() {
                         Text("临时解锁", style = MaterialTheme.typography.headlineSmall)
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            "解锁全部 $lockedCount 个界面 $duration 分钟，到期自动落锁。",
+                            when {
+                                planBlocked ->
+                                    "「计划窗口内禁用临时解锁」已开启，当前处于计划生效时段，暂时无法临时解锁。"
+                                !allowed && dailyMax == 0 ->
+                                    "已在「锁定强度」中禁用临时解锁。"
+                                !allowed ->
+                                    "今日临时解锁次数已用完（$usedToday / $dailyMax），明天恢复。"
+                                else ->
+                                    "解锁全部 $lockedCount 个界面 " + relockDelayLabel(durationSec) +
+                                        "，到期自动落锁。"
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.height(40.dp))
 
-                        when (requirement.mode) {
+                        // ★ v1.24.9：次数闸门 + 计划窗口闸门 —— 不满足时直接拦下，不进验证流程
+                        if (!allowed || planBlocked) {
+                            Spacer(Modifier.weight(1f))
+                            Row(Modifier.fillMaxWidth()) {
+                                TextButton(onClick = { finish() }) { Text("返回") }
+                            }
+                        } else when (requirement.mode) {
                             VerifyGate.METHOD_RANDOM -> {
                                 var target by remember { mutableStateOf(VerifyGate.genRandomCode(requirement.randomDigits)) }
                                 var input by remember { mutableStateOf("") }
@@ -109,7 +142,7 @@ class TempUnlockActivity : ComponentActivity() {
                                 }
                                 Spacer(Modifier.weight(1f))
                                 Actions(ok, onDismiss = { finish() }) {
-                                    confirmUnlock(duration)
+                                    confirmUnlock(durationSec)
                                 }
                             }
                             VerifyGate.METHOD_QUIZ -> {
@@ -155,7 +188,7 @@ class TempUnlockActivity : ComponentActivity() {
                                 }
                                 Spacer(Modifier.weight(1f))
                                 Actions(ok, onDismiss = { finish() }) {
-                                    confirmUnlock(duration)
+                                    confirmUnlock(durationSec)
                                 }
                             }
                             VerifyGate.METHOD_PASSWORD -> {
@@ -174,7 +207,7 @@ class TempUnlockActivity : ComponentActivity() {
                                 }
                                 Spacer(Modifier.weight(1f))
                                 Actions(ok, onDismiss = { finish() }) {
-                                    confirmUnlock(duration)
+                                    confirmUnlock(durationSec)
                                 }
                             }
                             VerifyGate.METHOD_DELAY -> {
@@ -185,21 +218,29 @@ class TempUnlockActivity : ComponentActivity() {
                                         remaining--
                                     }
                                 }
+                                // ★ v1.24.9：与 [UnlockVerifyDialog] 同一口径 ——
+                                //   等待时长可任意填，超过 1 分钟换成「12 分 30 秒」式读数。
+                                val shortForm = remaining < 60
                                 Column(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Text(
-                                        "$remaining",
-                                        style = MaterialTheme.typography.displayLarge
+                                        if (shortForm) "$remaining"
+                                        else VerifyGate.delayCountdownLabel(remaining),
+                                        style = (if (shortForm) MaterialTheme.typography.displayLarge
+                                        else MaterialTheme.typography.headlineMedium)
                                             .copy(fontFeatureSettings = "tnum", fontWeight = FontWeight.Bold),
                                         color = MaterialTheme.colorScheme.primary
                                     )
-                                    Text("秒后可解锁", style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        if (shortForm) "秒后可解锁" else "后可解锁",
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
                                 }
                                 Spacer(Modifier.weight(1f))
                                 Actions(remaining <= 0, onDismiss = { finish() }) {
-                                    confirmUnlock(duration)
+                                    confirmUnlock(durationSec)
                                 }
                             }
                             "window_blocked" -> {
@@ -211,13 +252,13 @@ class TempUnlockActivity : ComponentActivity() {
                                 )
                                 Spacer(Modifier.weight(1f))
                                 Actions(false, onDismiss = { finish() }) {
-                                    confirmUnlock(duration)
+                                    confirmUnlock(durationSec)
                                 }
                             }
                             else -> {
                                 Spacer(Modifier.weight(1f))
                                 Actions(true, onDismiss = { finish() }) {
-                                    confirmUnlock(duration)
+                                    confirmUnlock(durationSec)
                                 }
                             }
                         }
@@ -227,8 +268,10 @@ class TempUnlockActivity : ComponentActivity() {
         }
     }
 
-    private fun confirmUnlock(duration: Int) {
-        UnlockExemptions.addGlobal(applicationContext, System.currentTimeMillis() + duration * 60_000L)
+    private fun confirmUnlock(durationSec: Int) {
+        UnlockExemptions.addGlobal(applicationContext, System.currentTimeMillis() + durationSec * 1000L)
+        // ★ v1.24.9：记账 —— 每日次数上限自此真正生效（此前为死代码）
+        LockStrength.recordTempUnlock(applicationContext)
         AmsController.writeRules()
         // 打开桌面（用户自行选择要用的 App）
         runCatching {

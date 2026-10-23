@@ -41,6 +41,10 @@ object AppStore {
     var sessionCfgs by mutableStateOf<List<SessionCfg>>(emptyList())
         private set
 
+    /** 应用级解锁条件（pkg -> 条件）。优先级：界面级 > 应用级 > 全局。 */
+    var appVerify by mutableStateOf<Map<String, AppVerify>>(emptyMap())
+        private set
+
     private lateinit var ruleStore: RuleStore
     private lateinit var historyStore: HistoryStore
     private lateinit var presetStore: PresetStore
@@ -50,6 +54,12 @@ object AppStore {
     private lateinit var appContext: Context
     private val scope = kotlinx.coroutines.CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
 
+    /**
+     * ★ @Synchronized：Application.onCreate、各前台服务、Worker、磁贴都可能并发
+     *   首次调用。不加锁时 `if (::ruleStore.isInitialized) return` 不是原子操作，
+     *   两个线程会同时通过检查、重复构造 Store 并各自覆盖 apps/规则状态。
+     */
+    @Synchronized
     fun init(context: Context) {
         if (::ruleStore.isInitialized) return
         appContext = context.applicationContext
@@ -65,6 +75,11 @@ object AppStore {
         schedules = scheduleStore.schedules
         scenes = sceneStore.scenes
         sessionCfgs = sessionStore.entries
+        appVerify = ruleStore.appVerify
+        // ★ 把「应用级解锁条件」的来源交给 VerifyGate：它的 requirementFor() 是纯静态
+        //   调用点极多（磁贴 / 临时解锁 / 场景 / 收藏夹 / 自动锁闭页…），
+        //   用 provider 注入可以一次性拿到三级链，无需改动全部调用点。
+        VerifyGate.bindAppVerifyProvider { pkg -> appVerify[pkg] }
         reloadApps()
     }
 
@@ -82,7 +97,7 @@ object AppStore {
         appsLoadFailed = false
         scope.launch {
             var list = emptyList<AppEntry>()
-            // MIUI 偶发读不到应用列表（权限抖动/Binder 竞态），指数退避重试
+            // 包可见性偶尔被系统收窄（MIUI Binder 竞态），指数退避重试
             for (attempt in 1..4) {
                 list = withContext(Dispatchers.IO) {
                     runCatching { PmRepository.loadApps(appContext) }.getOrDefault(emptyList())
@@ -95,6 +110,10 @@ object AppStore {
             appsLoadFailed = list.isEmpty()
         }
     }
+
+    /** 列表明显偏少（<20）说明包可见性被系统收窄，UI 应给出引导而非当成"读取失败"。 */
+    fun appsLookRestricted(): Boolean =
+        !appsLoading && apps.isNotEmpty() && apps.size < 20
 
     fun findApp(pkg: String): AppEntry? = apps.firstOrNull { it.packageName == pkg }
 
@@ -117,9 +136,15 @@ object AppStore {
         block: Boolean = false,
         redirectUri: String? = null,
     ) {
+        // ★ 补初始化守卫：本文件其它方法都有，唯独这几个漏了。
+        //   若在 init 之前被调用（异常时序/后台线程抢先），lateinit 访问会直接抛
+        //   UninitializedPropertyAccessException 崩溃。
+        if (!::ruleStore.isInitialized) return
         if (ruleStore.contains(pkg, cls)) {
             ruleStore.updateLocked(pkg, cls, true)
-            // 传 null 表示不修改跳转目标；显式清空走 updateRedirect
+            // ★ 必须同步 block：writeRules() 只下发 block && locked 的规则。
+            //   漏掉这里 → 「已存在但原为 pm 模式」的条目即使写入了跳转也不生效。
+            ruleStore.updateBlock(pkg, cls, block)
             if (redirectUri != null) ruleStore.updateRedirect(pkg, cls, redirectUri)
         } else {
             ruleStore.add(LockRule(pkg, cls, note, block, redirectUri = redirectUri))
@@ -146,6 +171,21 @@ object AppStore {
         ruleStore.updateQuota(pkg, cls, min)
         rules = ruleStore.rules
     }
+
+    /**
+     * 设置**应用级**解锁条件（整个 App 的默认解锁方式）。
+     * mode=null 表示清除该层、回到「跟随全局」。
+     */
+    fun updateAppVerify(
+        pkg: String, mode: String?, delaySec: Int?, password: String?, quizCount: Int? = null
+    ) {
+        if (!::ruleStore.isInitialized) return
+        ruleStore.updateAppVerify(pkg, mode, delaySec, password, quizCount)
+        appVerify = ruleStore.appVerify
+    }
+
+    /** 该应用的应用级解锁条件（未设置为 null）。 */
+    fun appVerifyOf(pkg: String): AppVerify? = appVerify[pkg]
 
     /** 锁定有效期（到期自动解锁），untilMs=0 表示清除。 */
     fun updateLockUntil(pkg: String, cls: String, untilMs: Long) {
@@ -175,6 +215,7 @@ object AppStore {
     }
 
     fun updateLocked(pkg: String, cls: String, locked: Boolean) {
+        if (!::ruleStore.isInitialized) return
         ruleStore.updateLocked(pkg, cls, locked)
         rules = ruleStore.rules
     }
@@ -184,8 +225,14 @@ object AppStore {
 
     fun recordHistory(pkg: String, cls: String, mode: String, action: String) {
         if (!::historyStore.isInitialized) return
-        val note = rules.firstOrNull { it.packageName == pkg && it.activityName == cls }?.note ?: ""
-        historyStore.add(HistoryEntry(pkg, cls, note, mode, action))
+        val rule = rules.firstOrNull { it.packageName == pkg && it.activityName == cls }
+        // ★ 跳转目标一并入历史：收藏夹删除后从历史「重新锁定」才能还原成一样的配置。
+        historyStore.add(
+            HistoryEntry(
+                pkg, cls, rule?.note ?: "", mode, action,
+                redirectUri = rule?.redirectUri,
+            )
+        )
         history = historyStore.entries
     }
 
@@ -202,11 +249,13 @@ object AppStore {
     }
 
     fun removeRule(pkg: String, cls: String) {
+        if (!::ruleStore.isInitialized) return
         ruleStore.remove(pkg, cls)
         rules = ruleStore.rules
     }
 
     fun updateNote(pkg: String, cls: String, note: String) {
+        if (!::ruleStore.isInitialized) return
         ruleStore.updateNote(pkg, cls, note)
         rules = ruleStore.rules
     }

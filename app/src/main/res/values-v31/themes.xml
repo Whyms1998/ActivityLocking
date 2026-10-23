@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ 启动画面。★ 图标已由"深底白线"反转为"白底深线"（v1.24.0），
+     启动背景必须同步改白，否则深色图标压在深色底上会整个看不见。 -->
 <resources>
     <style name="Theme.ActivityLock" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowSplashScreenBackground">#2C3644</item>
+        <item name="android:windowSplashScreenBackground">#FFFFFF</item>
         <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
     </style>
 </resources>

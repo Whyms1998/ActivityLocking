@@ -2,7 +2,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
@@ -11,6 +10,22 @@
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
+
+    <!--
+      ★ 包可见性（Android 11+ 必需，否则 getInstalledPackages() 被 AppsFilter 拦截）：
+      本 App 的核心能力是"选择任意应用/任意界面来锁定"，必须能看到全部已安装应用。
+      仅声明 QUERY_ALL_PACKAGES 权限并不授予可见性——可见性由 <queries> 决定，
+      缺少本段时 system apps queryable=false，列表会时有时无（表现为"权限偶尔失效"）。
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
 
     <application
         android:name=".LockApp"
@@ -104,6 +119,15 @@
                 android:value="usage-quota-monitor" />
         </service>
 
+        <service
+            android:name=".core.AutoRelockService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="app-auto-relock-guard" />
+        </service>
+
         <receiver
             android:name=".core.BootReceiver"
             android:enabled="true"
@@ -134,6 +158,37 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
+
+
+        <!--
+          长按「全部锁闭」磁贴的落地页。
+          TileService 没有 onLongClick()；系统的长按行为 = 打开磁贴归属应用的
+          偏好/信息页。声明这个 intent-filter 后，长按会优先打开本页，
+          本页再立刻跳 MainActivity，实现「长按进主页」。
+
+          ★ 两个关键点（真机实测踩出来的，缺一不可）：
+          1. category DEFAULT —— 隐式 intent（系统长按发的就是隐式 intent）
+             必须命中 DEFAULT 类别才会被匹配到，否则本页根本不在候选里。
+          2. android:priority=999 —— 实测 HyperOS 的 SystemUI 发的是**没有
+             component / package 的裸隐式 intent**，会被系统里其它同样声明了
+             该 action 的应用（com.android.settings 开发者选项、
+             permissioncontroller、com.android.camera 等）一起命中，
+             系统于是弹出「选择要使用的应用」选择器。
+             而 PackageManagerService.chooseBestActivity() 的规则是：
+             候选里**优先级严格最高**的那一个直接胜出，不弹选择器。
+             所以我们把 priority 拉到 999（其余都是默认 0）即可唯一直选。
+        -->
+        <activity
+            android:name=".core.TilePrefsActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:theme="@style/Theme.UnlockGate">
+            <intent-filter android:priority="999">
+                <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
 
         <provider
             android:name="rikka.shizuku.ShizukuProvider"

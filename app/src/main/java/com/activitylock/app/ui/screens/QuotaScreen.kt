@@ -57,6 +57,8 @@ import com.activitylock.app.core.QuotaState
 import com.activitylock.app.core.UsageTracker
 import com.activitylock.app.core.VerifyGate
 import com.activitylock.app.ui.components.AppIcon
+import com.activitylock.app.ui.components.DurationField
+import com.activitylock.app.ui.components.DurationUnit
 import com.activitylock.app.ui.components.UnlockVerifyDialog
 
 private fun refresh(ctx: android.content.Context) {
@@ -165,12 +167,14 @@ fun QuotaScreen(onBack: () -> Unit) {
                             Spacer(Modifier.width(8.dp))
                             Text(
                                 if (c.mode == "lock") {
+                                    // ★ v1.24.9：时长读数统一（180 分钟 → 「3 小时」）
                                     "打开「" + (AppStore.findApp(c.pkg)?.label ?: c.pkg.substringAfterLast('.')) +
-                                        "」连续 " + c.limitMin + " 分钟 → 当日锁定（次日恢复）" + graceSuffix(c.graceSec)
+                                        "」连续 " + relockDelayLabel(c.limitMin * 60) + " → 当日锁定（次日恢复）" + graceSuffix(c.graceSec)
                                 } else {
                                     "打开「" + (AppStore.findApp(c.pkg)?.label ?: c.pkg.substringAfterLast('.')) +
-                                        "」" + c.limitMin + " 分钟后自动打开「" + sessionTargetLabel(c.target) + "」" +
-                                        (if (c.maxJumps > 0) "· 当日 " + c.maxJumps + " 次后锁定" else "") +
+                                        "」" + relockDelayLabel(c.limitMin * 60) + "后自动打开「" + sessionTargetLabel(c.target) + "」" +
+                                        // ★ 规范 §1：原来拼的是 "· 当日 N 次后锁定"（中点另起一条规则）→ 用逗号承接
+                                        (if (c.maxJumps > 0) "，当日 " + c.maxJumps + " 次后锁定" else "") +
                                         graceSuffix(c.graceSec)
                                 },
                                 style = MaterialTheme.typography.labelMedium,
@@ -221,7 +225,8 @@ fun QuotaScreen(onBack: () -> Unit) {
                                     Text(label, style = MaterialTheme.typography.titleSmall)
                                     Spacer(Modifier.height(4.dp))
                                     Text(
-                                        if (used >= min) "今日已用 $used/$min 分钟 · 已超额"
+                                        // ★ 规范 §1：原来「今日已用 X/Y 分钟 · 已超额」——超额是结论不是并列项
+                                        if (used >= min) "今日已用 $used/$min 分钟（已超额）"
                                         else "今日已用 $used/$min 分钟",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = if (used >= min) MaterialTheme.colorScheme.error
@@ -328,11 +333,18 @@ private fun QuotaAddDialog(
     onDismiss: () -> Unit,
 ) {
     var selected by remember { mutableStateOf(candidates.firstOrNull() ?: "") }
-    var minutes by remember { mutableStateOf("20") }
+    // ★ v1.24.9：分钟数改为统一的 [DurationField]（分钟 / 小时，无「秒」档 ——
+    //   限额按分钟统计，放开秒会让用户填出一个存不进去的值）。
+    //   单位只留这两档，所以秒数永远是 60 的整数倍，落盘不做任何取整。
+    var limitSec by remember { mutableStateOf(20 * 60) }
+    val limitMin = limitSec / 60
+    val overDay = limitMin > 1440
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("添加限额") },
         text = {
+            // ★ 分钟数输入框会唤起键盘 → 让 Dialog window 随键盘收缩
+            com.activitylock.app.ui.components.DialogImeResize()
             Column {
                 if (candidates.isEmpty()) {
                     Text("所有已锁规则的 App 都已配置限额。")
@@ -349,19 +361,30 @@ private fun QuotaAddDialog(
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = minutes,
-                    onValueChange = { minutes = it.filter { c -> c.isDigit() }.take(4) },
-                    label = { Text("每日限额（分钟）") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                DurationField(
+                    seconds = limitSec,
+                    onChange = { limitSec = it },
+                    units = listOf(DurationUnit.MIN, DurationUnit.HOUR),
+                    equivalent = { sec ->
+                        if (sec <= 0) "请填写额度" else "每天可用 " + relockDelayLabel(sec)
+                    },
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    // ★ 「每日」限额的天然上限就是一天 —— 这是定义边界而不是随手限幅，
+                    //   因此保留但**明说**，不再静默钳制。
+                    if (overDay) "超出上限：每天最多 24 小时（1440 分钟）"
+                    else "超额后当天拦截该 App，次日 0 点重置",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (overDay) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         },
         confirmButton = {
             TextButton(
-                enabled = selected.isNotBlank() && (minutes.toIntOrNull() ?: 0) in 1..1440,
-                onClick = { onConfirm(selected, minutes.toInt()) }
+                enabled = selected.isNotBlank() && limitMin in 1..1440,
+                onClick = { onConfirm(selected, limitMin) }
             ) { Text("保存") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
@@ -369,7 +392,9 @@ private fun QuotaAddDialog(
 }
 
 private fun graceSuffix(sec: Int): String =
-    if (sec == 120) "" else "· 宽限 " + sec + " 秒"
+    // ★ 规范 §1：原来返回 "· 宽限 N 秒"（中点另起一条规则）→ 逗号承接更顺
+    // ★ v1.24.9：可自由填时长后统一走 relockDelayLabel（3600 读作「1 小时」而非「3600 秒」）
+    if (sec == 120) "" else "，宽限 " + relockDelayLabel(sec)
 
 private fun sessionTargetLabel(target: String): String {
     val t = target.trim()
@@ -391,8 +416,9 @@ private fun SessionAddDialog(
     var query2 by remember { mutableStateOf("") }
     var trigger by remember { mutableStateOf<String?>(null) }
     var target by remember { mutableStateOf<String?>(null) }
-    var minutes by remember { mutableStateOf("1") }
-    var graceText by remember { mutableStateOf("120") }
+    // ★ v1.24.9：两个「时长」都改秒存储 + 统一输入组件（分钟/小时、秒/分钟/小时）
+    var limitSec by remember { mutableStateOf(60) }     // 连续使用：默认 1 分钟
+    var graceSec by remember { mutableStateOf(120) }     // 离开宽限期：默认 120 秒
     var maxJumps by remember { mutableStateOf(3) }
     var customJumps by remember { mutableStateOf(false) }
     var showCustomJumpsDialog by remember { mutableStateOf(false) }
@@ -412,6 +438,8 @@ private fun SessionAddDialog(
         onDismissRequest = onDismiss,
         title = { Text("新增到点跳转") },
         text = {
+            // ★ 目标包名等输入框会唤起键盘 → 让 Dialog window 随键盘收缩
+            com.activitylock.app.ui.components.DialogImeResize()
             // 内容整体可滚动（PickerList 内部自带滚动，超出屏幕的部分靠这里拖动）
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text("刷满后怎么处理", style = MaterialTheme.typography.labelMedium)
@@ -453,21 +481,27 @@ private fun SessionAddDialog(
                     PickerList(candidates(query2, trigger), target) { target = it }
                 }
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = minutes,
-                    onValueChange = { minutes = it.filter { c -> c.isDigit() }.take(3) },
-                    label = { Text("连续使用（分钟）") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                // ★ v1.24.9：原来「连续使用（分钟）/ 离开宽限期（秒）」两个写死单位的
+                //   输入框（还各自带一套范围文案）统一为 [DurationField]，
+                //   秒 / 分钟 / 小时自由选，不再有范围限制。
+                Text("连续使用多久算刷满", style = MaterialTheme.typography.labelMedium)
+                DurationField(
+                    seconds = limitSec,
+                    onChange = { limitSec = it },
+                    units = listOf(DurationUnit.MIN, DurationUnit.HOUR),
+                    equivalent = { sec ->
+                        if (sec <= 0) "请填写时长" else "连续使用满 " + relockDelayLabel(sec)
+                    },
                 )
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = graceText,
-                    onValueChange = { graceText = it.filter { c -> c.isDigit() }.take(4) },
-                    label = { Text("离开宽限期（秒）") },
-                    placeholder = { Text("切出后在此时间内回来接着算，默认 120") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                Spacer(Modifier.height(10.dp))
+                Text("离开宽限期", style = MaterialTheme.typography.labelMedium)
+                DurationField(
+                    seconds = graceSec,
+                    onChange = { graceSec = it },
+                    equivalent = { sec ->
+                        if (sec <= 0) "切出即重新计时"
+                        else "切出 " + relockDelayLabel(sec) + " 内回来接着算"
+                    },
                 )
                 if (mode == "jump") {
                     Spacer(Modifier.height(8.dp))
@@ -477,14 +511,18 @@ private fun SessionAddDialog(
                         Modifier.horizontalScroll(rememberScrollState()),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        listOf(0 to "不锁定", 1 to "1 次", 3 to "3 次").forEach { (n, label) ->
+                        // ★ v1.24.8（用户 2026-10-13）：预设里的「3 次」改成「自定义次数」。
+                        //   原来 listOf(0,1,3) 里硬塞了一个 3，覆盖不了用户真正想要的数
+                        //   （比如 5 次、10 次）。现在预设只留两个语义明确的档
+                        //   （不锁定 / 1 次），其余全部走「自定义」。
+                        listOf(0 to "不锁定", 1 to "1 次").forEach { (n, label) ->
                             FilterChip(
                                 selected = !customJumps && maxJumps == n,
                                 onClick = {
                                     maxJumps = n
                                     customJumps = false
                                 },
-                                label = { Text(label) }
+                                label = { Text(label, maxLines = 1) }
                             )
                             Spacer(Modifier.width(4.dp))
                         }
@@ -511,13 +549,13 @@ private fun SessionAddDialog(
         },
         confirmButton = {
             TextButton(
+                // ★ v1.24.9：连续使用至少 1 分钟（分钟粒度），宽限期任意（0 = 切出即清零）
                 enabled = trigger != null && (mode == "lock" || target != null) &&
-                    (minutes.toIntOrNull() ?: 0) in 1..240 && maxJumps in 0..99 &&
-                    (graceText.toIntOrNull() ?: -1) in 0..3600,
+                    limitSec >= 60 && maxJumps in 0..99 && graceSec >= 0,
                 onClick = {
                     onConfirm(
-                        trigger!!, target ?: "", minutes.toInt(),
-                        maxJumps, mode, graceText.toInt()
+                        trigger!!, target ?: "", limitSec / 60,
+                        maxJumps, mode, graceSec
                     )
                 }
             ) { Text("保存") }
@@ -529,6 +567,8 @@ private fun SessionAddDialog(
             onDismissRequest = { showCustomJumpsDialog = false },
             title = { Text("自定义锁定次数") },
             text = {
+                // ★ 次数输入框会唤起键盘 → 让 Dialog window 随键盘收缩
+                com.activitylock.app.ui.components.DialogImeResize()
                 Column {
                     Text(
                         "当日第 N 次跳转后锁定该 App（1-99 次）",
@@ -536,13 +576,25 @@ private fun SessionAddDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = customJumpsText,
-                        onValueChange = { customJumpsText = it.filter { c -> c.isDigit() }.take(2) },
-                        label = { Text("次数") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                OutlinedTextField(
+                    value = customJumpsText,
+                    onValueChange = { customJumpsText = it.filter { c -> c.isDigit() }.take(2) },
+                    label = { Text("次数") },
+                    singleLine = true,
+                    // ★ v1.24.7：与上面「每日限额」同一套口径 —— 按钮禁用要说理由。
+                    isError = (customJumpsText.toIntOrNull() ?: 0) !in 1..99,
+                    supportingText = {
+                        Text(
+                            if ((customJumpsText.toIntOrNull() ?: 0) !in 1..99) "只能填 1 – 99 次"
+                            else "范围 1 – 99 次",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if ((customJumpsText.toIntOrNull() ?: 0) !in 1..99)
+                                MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
                 }
             },
             confirmButton = {

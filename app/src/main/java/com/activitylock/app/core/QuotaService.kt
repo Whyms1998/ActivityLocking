@@ -8,10 +8,11 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
 import androidx.core.app.NotificationCompat
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 
 /**
  * 限额守护：前台服务，屏幕亮着时每分钟统计限额 App 的当日使用时长，
@@ -20,23 +21,26 @@ import androidx.core.app.NotificationCompat
  */
 class QuotaService : Service() {
 
-    private val handler = Handler(Looper.getMainLooper())
+    private var executor: ScheduledExecutorService? = null
+
+    /** 跨线程读写（广播在主线程写、轮询线程读）→ volatile。 */
+    @Volatile
     private var screenOn = true
+    @Volatile
     private var running = false
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
-                Intent.ACTION_SCREEN_ON -> { screenOn = true; tick() }
+                // ★ tick() 内含 Shizuku 子进程（am force-stop）、UsageStats 全量遍历、
+                //   文件 IO（writeRules），onReceive 默认跑在主线程 → 必然 ANR。
+                //   统一派发到后台轮询线程执行。
+                Intent.ACTION_SCREEN_ON -> {
+                    screenOn = true
+                    executor?.execute { if (running) runCatching { tick() } }
+                }
                 Intent.ACTION_SCREEN_OFF -> screenOn = false
             }
-        }
-    }
-
-    private val tickRunnable = object : Runnable {
-        override fun run() {
-            if (running) tick()
-            handler.postDelayed(this, 60_000)
         }
     }
 
@@ -51,12 +55,21 @@ class QuotaService : Service() {
             stopSelf()
             return
         }
-        registerReceiver(receiver, IntentFilter().apply {
-            addAction(Intent.ACTION_SCREEN_ON)
-            addAction(Intent.ACTION_SCREEN_OFF)
-        })
+        val exec = Executors.newSingleThreadScheduledExecutor { r ->
+            Thread(r, "quota").apply { isDaemon = true }
+        }
+        executor = exec
+        runCatching {
+            registerReceiver(receiver, IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_SCREEN_OFF)
+            })
+        }
         running = true
-        handler.post(tickRunnable)
+        // scheduleWithFixedDelay：上次跑完才排下次，不会堆积任务
+        exec.scheduleWithFixedDelay(
+            { if (running) runCatching { tick() } }, 0L, 60_000L, TimeUnit.MILLISECONDS
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int =
@@ -64,7 +77,8 @@ class QuotaService : Service() {
 
     override fun onDestroy() {
         running = false
-        handler.removeCallbacks(tickRunnable)
+        executor?.shutdownNow()
+        executor = null
         runCatching { unregisterReceiver(receiver) }
         super.onDestroy()
     }
@@ -72,6 +86,9 @@ class QuotaService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun tick() {
+        // 息屏时暂停统计循环（省电）。原实现只在接收器里记 screenOn 却从不读，
+        // 类注释承诺的"屏幕熄灭时暂停"实际未生效，息屏后仍每 60s 全量查询。
+        if (!screenOn) return
         runCatching {
             AppStore.ensureInit(this)
             if (!UsageTracker.hasPermission(this)) return

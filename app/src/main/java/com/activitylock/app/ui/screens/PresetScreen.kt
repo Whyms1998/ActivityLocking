@@ -67,14 +67,24 @@ private fun statusOf(p: ConfigPreset, installed: Set<String>): PresetStatus {
     }
     if (rule == null) return PresetStatus.NotImported
     val redirectMatch = (rule.redirectUri ?: "").trim() == (p.redirectUri ?: "").trim()
-    return if (rule.locked && redirectMatch) PresetStatus.Active else PresetStatus.NeedsRestore
+    // ★ 带跳转的方案只有在「拦截模式（block）」下才真正生效：
+    //   AmsController.writeRules() 只下发 block && locked 的规则。
+    //   缺这一条会把「已写跳转但永不下发」的条目显示成绿色的「已启用」，与实际相反。
+    val modeOk = p.redirectUri.isNullOrBlank() || rule.block
+    return if (rule.locked && redirectMatch && modeOk) PresetStatus.Active else PresetStatus.NeedsRestore
 }
 
-/** 状态点颜色：绿=已启用，琥珀=待恢复，灰=未导入/未安装。 */
+/**
+ * 状态点颜色：绿=已启用，琥珀=待恢复，灰=未导入/未安装。
+ *
+ * ★ 一律走 [AppColors]（文档 §5 禁止在业务代码里写 `#RRGGBB` 字面量），
+ *   深浅色自动跟随，不再各自硬编码一套。
+ */
+@Composable
 private fun statusColor(status: PresetStatus): Color = when (status) {
-    PresetStatus.Active -> Color(0xFF2E7D5B)
-    PresetStatus.NeedsRestore -> Color(0xFFB07D2B)
-    else -> Color(0xFFB9BDB5)
+    PresetStatus.Active -> com.activitylock.app.ui.theme.AppColors.success
+    PresetStatus.NeedsRestore -> com.activitylock.app.ui.theme.AppColors.warn
+    else -> com.activitylock.app.ui.theme.AppColors.muted
 }
 
 private fun statusLabel(status: PresetStatus): String = when (status) {
@@ -286,8 +296,9 @@ private fun PresetRow(
                     )
                 }
                 Text(
+                    // ★ 规范 §1：原来无深链时补 "  · 纯拦截"（中点占位）→ 换成括号说明
                     "锁 ${preset.activityName.substringAfterLast('.')}" +
-                        (preset.redirectUri?.let { "  ↗ $it" } ?: "  · 纯拦截"),
+                        (preset.redirectUri?.let { "  ↗ $it" } ?: "（纯拦截）"),
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = FontFamily.Monospace,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -358,6 +369,8 @@ private fun PresetEditorDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial == null) "新建方案" else "编辑方案") },
         text = {
+            // ★ 名称/包名/界面等多个输入框 → 让 Dialog window 随键盘收缩
+            com.activitylock.app.ui.components.DialogImeResize()
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = label, onValueChange = { label = it },

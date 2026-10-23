@@ -13,13 +13,20 @@ android {
         applicationId = "com.activitylock.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 24
-        versionName = "1.4.1"
+        versionCode = 80
+        versionName = "1.24.16"
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 压缩 + 资源裁剪：APK 从 ~7MB 降到 ~1.6MB；
+            // 同时按需裁剪 material-icons-extended 里未使用的图标
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             // 用 debug 签名出 release 包：Compose 关闭调试插桩，列表滑动明显更流畅
             signingConfig = signingConfigs.getByName("debug")
         }
@@ -45,6 +52,7 @@ dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.09.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.activity:activity-compose:1.9.2")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.5")
