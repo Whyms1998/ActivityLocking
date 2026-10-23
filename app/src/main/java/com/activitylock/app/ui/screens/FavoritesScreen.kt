@@ -606,11 +606,6 @@ fun FavoritesScreen(
                 onClick = { selectedGroup = null },
                 label = { Text("全部") }
             )
-            FilterChip(
-                selected = selectedGroup == "",
-                onClick = { selectedGroup = "" },
-                label = { Text("默认") }
-            )
             AppStore.groups.forEach { g ->
                 FilterChip(
                     selected = selectedGroup == g.id,
@@ -931,7 +926,7 @@ fun FavoritesScreen(
             text = {
                 Column {
                     Text(
-                        "本界面的重锁时机与延迟；界面级设置优先于全局，全局总闸关闭时一律不锁。",
+                        "本界面的重锁时机与延迟；界面级设置优先于全局。打开开关时若全局总闸未开会自动同步打开。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -945,7 +940,13 @@ fun FavoritesScreen(
                                 checked = unlockP && AutoRelock.relockAfterUnlockEnabled,
                                 onValueClick = { valueLink = AutoRelockStore.LINK_UNLOCK },
                                 onSwitchChange = { on ->
-                                    val apply = { unlockP = on; applyCfg() }
+                                    val apply = {
+                                        if (on && !AutoRelock.relockAfterUnlockEnabled) {
+                                            AutoRelock.setRelockAfterUnlock(true)
+                                            AppStore.toast("已同时打开全局「解锁后」")
+                                        }
+                                        unlockP = on; applyCfg()
+                                    }
                                     if (on) apply() else pendingApply = apply
                                 }
                             ),
@@ -956,7 +957,13 @@ fun FavoritesScreen(
                                 checked = exitP && AutoRelock.relockOnExitEnabled,
                                 onValueClick = { valueLink = AutoRelockStore.LINK_EXIT },
                                 onSwitchChange = { on ->
-                                    val apply = { exitP = on; applyCfg() }
+                                    val apply = {
+                                        if (on && !AutoRelock.relockOnExitEnabled) {
+                                            AutoRelock.setRelockOnExit(true)
+                                            AppStore.toast("已同时打开全局「退出后」")
+                                        }
+                                        exitP = on; applyCfg()
+                                    }
                                     if (on) apply() else pendingApply = apply
                                 }
                             ),
@@ -967,7 +974,13 @@ fun FavoritesScreen(
                                 checked = screenOffP && AutoRelock.relockOnScreenOffEnabled,
                                 onValueClick = { valueLink = AutoRelockStore.LINK_SCREEN_OFF },
                                 onSwitchChange = { on ->
-                                    val apply = { screenOffP = on; applyCfg() }
+                                    val apply = {
+                                        if (on && !AutoRelock.relockOnScreenOffEnabled) {
+                                            AutoRelock.setRelockOnScreenOff(true)
+                                            AppStore.toast("已同时打开全局「锁屏后」")
+                                        }
+                                        screenOffP = on; applyCfg()
+                                    }
                                     if (on) apply() else pendingApply = apply
                                 }
                             ),

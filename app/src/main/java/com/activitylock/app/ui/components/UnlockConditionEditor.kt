@@ -141,22 +141,22 @@ fun UnlockConditionEditor(
                     OutlinedTextField(
                         value = quizDraft,
                         onValueChange = { raw ->
-                            val digits = raw.filter { c -> c.isDigit() }.take(2)
+                            val digits = raw.filter { c -> c.isDigit() }.take(3)
                             quizDraft = digits
                             // ★ 合法即即时回调：改完直接点「保存」也不丢值。
-                            digits.toIntOrNull()?.takeIf { it in 1..10 }?.let(onQuizCountChange)
+                            digits.toIntOrNull()?.takeIf { it in 1..999 }?.let(onQuizCountChange)
                         },
                         // ★ v1.24.7：与等待秒数同一套口径（草稿态 + 越界标红 + 明示范围），
                         //   不再 `coerceIn(1,10)` 静默改写（输 88 会被悄悄变成 10）。
                         isError = quizDraft.isNotEmpty() &&
-                            quizDraft.toIntOrNull()?.let { it !in 1..10 } == true,
+                            quizDraft.toIntOrNull()?.let { it !in 1..999 } == true,
                         supportingText = {
                             Text(
-                                if (quizDraft.isNotEmpty() && quizDraft.toIntOrNull()?.let { it !in 1..10 } == true)
-                                    "只能填 1 – 10"
-                                else "范围 1 – 10",
+                                if (quizDraft.isNotEmpty() && quizDraft.toIntOrNull()?.let { it !in 1..999 } == true)
+                                    "只能填 1 – 999"
+                                else "范围 1 – 999",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (quizDraft.isNotEmpty() && quizDraft.toIntOrNull()?.let { it !in 1..10 } == true)
+                                color = if (quizDraft.isNotEmpty() && quizDraft.toIntOrNull()?.let { it !in 1..999 } == true)
                                     MaterialTheme.colorScheme.error
                                 else MaterialTheme.colorScheme.onSurfaceVariant
                             )
