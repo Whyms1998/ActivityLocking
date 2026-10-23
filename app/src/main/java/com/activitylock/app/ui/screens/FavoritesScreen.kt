@@ -219,6 +219,8 @@ fun FavoritesScreen(
     var showNewGroupFor by remember { mutableStateOf<String?>(null) }
     var newGroupName by remember { mutableStateOf("") }
     var pendingBulkUnlock by remember { mutableStateOf<(() -> Unit)?>(null) }
+    /** 分组管理对话框（新建 / 重命名 / 删除）。 */
+    var groupsManageOpen by remember { mutableStateOf(false) }
 
     val shownRules = remember(rules, selectedGroup, AppStore.groupAssign, searchQ) {
         val base = when (selectedGroup) {
@@ -488,6 +490,13 @@ fun FavoritesScreen(
                                 groupMenuOpen = false
                             }
                         )
+                        DropdownMenuItem(
+                            text = { Text("管理分组…") },
+                            onClick = {
+                                groupsManageOpen = true
+                                groupMenuOpen = false
+                            }
+                        )
                     }
                 }
             } else {
@@ -609,6 +618,11 @@ fun FavoritesScreen(
                     )
                 )
             }
+            FilterChip(
+                selected = false,
+                onClick = { groupsManageOpen = true },
+                label = { Text("＋ 管理") }
+            )
         }
 
         // 一键专注 + 破功回流
@@ -824,7 +838,7 @@ fun FavoritesScreen(
             .offset {
                 val base = Offset(
                     (boxSize.width - fabSize.width - 48.dp.roundToPx()).toFloat(),
-                    (boxSize.height - fabSize.height - 200.dp.roundToPx()).toFloat(),
+                    (boxSize.height - fabSize.height - 120.dp.roundToPx()).toFloat(),
                 )
                 val p0 = fabPos ?: base
                 IntOffset(
@@ -838,7 +852,7 @@ fun FavoritesScreen(
                     change.consume()
                     val base = Offset(
                         (boxSize.width - fabSize.width - 48.dp.roundToPx()).toFloat(),
-                        (boxSize.height - fabSize.height - 200.dp.roundToPx()).toFloat(),
+                        (boxSize.height - fabSize.height - 120.dp.roundToPx()).toFloat(),
                     )
                     val cur = fabPos ?: base
                     fabPos = Offset(
@@ -978,6 +992,74 @@ fun FavoritesScreen(
             },
             dismissButton = {
                 TextButton(onClick = { relockCfgRule = null }) { Text("取消") }
+            }
+        )
+    }
+
+    // ---------- 分组管理：新建 + 逐组重命名 / 删除 ----------
+    if (groupsManageOpen) {
+        var newName by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { groupsManageOpen = false },
+            title = { Text("管理分组") },
+            text = {
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = newName,
+                            onValueChange = { newName = it.take(12) },
+                            label = { Text("新建分组名") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(
+                            enabled = newName.isNotBlank(),
+                            onClick = {
+                                AppStore.addGroup(newName)
+                                newName = ""
+                            }
+                        ) { Text("创建") }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Column(
+                        Modifier
+                            .heightIn(max = 320.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        if (AppStore.groups.isEmpty()) {
+                            Text(
+                                "还没有自定义分组",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        AppStore.groups.forEach { g ->
+                            var nameEdit by remember(g.id) { mutableStateOf(g.name) }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(
+                                    value = nameEdit,
+                                    onValueChange = { nameEdit = it.take(12) },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                TextButton(
+                                    enabled = nameEdit.isNotBlank() && nameEdit != g.name,
+                                    onClick = { AppStore.renameGroup(g.id, nameEdit) }
+                                ) { Text("重命名") }
+                                IconButton(onClick = { AppStore.removeGroup(g.id) }) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "删除分组",
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { groupsManageOpen = false }) { Text("完成") }
             }
         )
     }
@@ -1462,37 +1544,37 @@ private fun GridDetailDialog(
                                     onCheckedChange = { want -> onToggleLock(rule.activityName, want) }
                                 )
                             }
-                            // 第二行：四个操作按钮（右对齐）
+                            // 第二行：四个操作按钮（居中均布）
                             Row(
                                 Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End
+                                horizontalArrangement = Arrangement.SpaceEvenly
                             ) {
                                 IconButton(onClick = { onEditUnlock(rule) }) {
                                     Icon(
                                         Icons.Default.Key,
                                         contentDescription = "解锁条件",
-                                        modifier = Modifier.size(18.dp)
+                                        modifier = Modifier.size(22.dp)
                                     )
                                 }
                                 IconButton(onClick = { onRelockConfig(rule) }) {
                                     Icon(
                                         Icons.Default.Schedule,
                                         contentDescription = "自动锁闭",
-                                        modifier = Modifier.size(18.dp)
+                                        modifier = Modifier.size(22.dp)
                                     )
                                 }
                                 IconButton(onClick = { onEdit(rule) }) {
                                     Icon(
                                         Icons.Default.Edit,
                                         contentDescription = "编辑",
-                                        modifier = Modifier.size(18.dp)
+                                        modifier = Modifier.size(22.dp)
                                     )
                                 }
                                 IconButton(onClick = { onDeleteRequest(rule) }) {
                                     Icon(
                                         Icons.Default.Delete,
                                         contentDescription = "删除",
-                                        modifier = Modifier.size(18.dp)
+                                        modifier = Modifier.size(22.dp)
                                     )
                                 }
                             }

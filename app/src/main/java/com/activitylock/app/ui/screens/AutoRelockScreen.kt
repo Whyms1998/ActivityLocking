@@ -287,7 +287,7 @@ private fun SceneRowCard(
             }
             TextButton(onClick = onEditDelay) {
                 Text(
-                    if (delaySec == 0) "立即" else "${delaySec}s",
+                    relockDelayLabel(delaySec),
                     style = MaterialTheme.typography.titleSmall
                 )
             }
