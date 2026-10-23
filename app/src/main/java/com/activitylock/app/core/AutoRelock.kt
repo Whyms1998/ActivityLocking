@@ -24,25 +24,23 @@ import java.io.File
  *   ① 解锁后重新锁 ② 退出后重新锁 ③ 锁屏后重新锁，各有独立开关与延迟。
  */
 /**
- * 单个界面的自动锁闭覆盖配置（v2 精简模型）。
+ * 单个界面的自动锁闭覆盖配置（对齐旧版场景行样式：开关 + 延迟值）。
  *
- * 与旧版三层系统的区别：**没有**逐链路参与开关、没有应用级层、没有自愈机制——
- * 只有「每条链路的延迟：跟随全局(-1) 或 自定义(>=0)」。
- * 优先级：界面级显式设置 > 全局；全局总闸关 = 一律不锁（铁律，界面级不能越过）。
+ * 仅两层：界面级显式设置 > 全局；全局总闸关 = 一律不锁（铁律）。
+ * 每条链路：participate = 该界面此链路是否参与（关 = 界面级否决）；
+ * delaySec = -1 跟随全局，>=0 自定义（秒）。
  */
 @Serializable
 data class ActivityRelockCfg(
     val pkg: String,
     val cls: String,
-    /** 解锁后重锁延迟（秒），-1 = 跟随全局。 */
-    val delayUnlock: Int = -1,
-    /** 退出后重锁延迟（秒），-1 = 跟随全局。退出链路按包触发，取该包内自定义的最小值。 */
-    val delayExit: Int = -1,
-    /** 锁屏后重锁延迟（秒），-1 = 跟随全局。 */
-    val delayScreenOff: Int = -1,
-) {
-    fun hasOverride(): Boolean = delayUnlock >= 0 || delayExit >= 0 || delayScreenOff >= 0
-}
+    val unlockParticipate: Boolean = true,
+    val unlockDelaySec: Int = -1,
+    val exitParticipate: Boolean = true,
+    val exitDelaySec: Int = -1,
+    val screenOffParticipate: Boolean = true,
+    val screenOffDelaySec: Int = -1,
+)
 
 @Serializable
 data class RelockData(
@@ -78,7 +76,7 @@ data class RelockData(
         const val MAX_DELAY_SEC = 100_000_000
 
         const val NOT_LOCK = -1
-        const val CURRENT_SCHEMA = 5
+        const val CURRENT_SCHEMA = 6
         const val DELAY_UNLOCK = 0
         const val DELAY_EXIT = 1
         const val DELAY_SCREEN_OFF = 2
@@ -198,7 +196,7 @@ class AutoRelockStore(filesDir: File) {
     fun setActivityCfg(cfg: ActivityRelockCfg) {
         val next = _data.value.activities.filterNot { it.pkg == cfg.pkg && it.cls == cfg.cls }
         _data.value = _data.value.copy(
-            activities = if (cfg.hasOverride()) next + cfg else next,
+            activities = next + cfg,
             schema = RelockData.CURRENT_SCHEMA,
         )
         save()
@@ -230,7 +228,7 @@ class AutoRelockStore(filesDir: File) {
     companion object {
         const val MAX_DELAY_SEC = 100_000_000
         const val NOT_LOCK = -1
-        const val CURRENT_SCHEMA = 5
+        const val CURRENT_SCHEMA = 6
         const val DELAY_UNLOCK = 0
         const val DELAY_EXIT = 1
         const val DELAY_SCREEN_OFF = 2
@@ -330,20 +328,51 @@ object AutoRelock {
             val c = store.activityCfg(pkg, cls)
             if (c != null) {
                 val v = when (link) {
-                    AutoRelockStore.LINK_EXIT -> c.delayExit
-                    AutoRelockStore.LINK_SCREEN_OFF -> c.delayScreenOff
-                    else -> c.delayUnlock
+                    AutoRelockStore.LINK_EXIT -> c.exitDelaySec
+                    AutoRelockStore.LINK_SCREEN_OFF -> c.screenOffDelaySec
+                    else -> c.unlockDelaySec
                 }
                 if (v >= 0) return v
             }
         } else if (link == AutoRelockStore.LINK_EXIT) {
             val customs = store.activityCfgs
-                .filter { it.pkg == pkg && it.delayExit >= 0 }
-                .map { it.delayExit }
+                .filter { it.pkg == pkg && it.exitDelaySec >= 0 }
+                .map { it.exitDelaySec }
             if (customs.isNotEmpty()) return customs.min()
         }
         return global
     }
+
+    /**
+     * 「到底锁不锁 + 等多久」的完整裁决（界面级显式设置 > 全局；全局总闸一票否决）：
+     *  - 该界面此链路 cfg.participate = false → 不锁（界面级否决）；
+     *  - 延迟 = 界面级自定义(>=0) > 全局。
+     * @return -1 = 不锁；>=0 = 延迟秒数。
+     */
+    fun lockSec(pkg: String?, cls: String?, link: Int): Int {
+        val globalOn = when (link) {
+            AutoRelockStore.LINK_EXIT -> relockOnExitEnabled
+            AutoRelockStore.LINK_SCREEN_OFF -> relockOnScreenOffEnabled
+            else -> relockAfterUnlockEnabled
+        }
+        if (!globalOn) return AutoRelockStore.NOT_LOCK
+        if (cls != null) {
+            val c = store.activityCfg(pkg, cls)
+            if (c != null) {
+                val part = when (link) {
+                    AutoRelockStore.LINK_EXIT -> c.exitParticipate
+                    AutoRelockStore.LINK_SCREEN_OFF -> c.screenOffParticipate
+                    else -> c.unlockParticipate
+                }
+                if (!part) return AutoRelockStore.NOT_LOCK
+            }
+        }
+        return resolveDelay(pkg, cls, link)
+    }
+
+    /** 该界面/应用某链路是否参与（含全局闸与界面级否决）。 */
+    fun lockedByState(pkg: String?, cls: String?, link: Int): Boolean =
+        lockSec(pkg, cls, link) >= 0
 
     fun effectiveDelaySec(pkg: String?, cls: String?): Int =
         resolveDelay(pkg, cls, AutoRelockStore.LINK_UNLOCK)
@@ -383,7 +412,7 @@ object AutoRelock {
             it.packageName == pkg && (cls == null || it.activityName == cls)
         }
         if (!inFavorites) return false
-        return store.isEnabledFor(pkg, cls, link)
+        return lockedByState(pkg, cls, link)
     }
 
     fun isTrackedAny(pkg: String, cls: String?): Boolean {
@@ -391,7 +420,9 @@ object AutoRelock {
             it.packageName == pkg && (cls == null || it.activityName == cls)
         }
         if (!inFavorites) return false
-        return store.isEnabledForAny(pkg, cls)
+        return lockedByState(pkg, cls, AutoRelockStore.LINK_UNLOCK) ||
+            lockedByState(pkg, cls, AutoRelockStore.LINK_EXIT) ||
+            lockedByState(pkg, cls, AutoRelockStore.LINK_SCREEN_OFF)
     }
 
     fun noteOpened(pkg: String, cls: String?) {

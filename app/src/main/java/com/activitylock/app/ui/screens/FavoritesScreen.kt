@@ -91,6 +91,7 @@ import androidx.compose.ui.unit.dp
 import com.activitylock.app.core.AmsController
 import com.activitylock.app.core.AppStore
 import com.activitylock.app.core.AutoRelock
+import com.activitylock.app.core.AutoRelockStore
 import com.activitylock.app.core.AutoRelockService
 import com.activitylock.app.core.ActivityRelockCfg
 import com.activitylock.app.core.BlockStats
@@ -107,7 +108,10 @@ import com.activitylock.app.core.VerifyGate
 import com.activitylock.app.ui.components.AppIcon
 import com.activitylock.app.ui.components.DurationField
 import com.activitylock.app.ui.components.DurationUnit
+import com.activitylock.app.ui.components.SceneRowSpec
 import com.activitylock.app.ui.components.SceneRowsCard
+import com.activitylock.app.ui.components.SceneValueDialog
+import com.activitylock.app.ui.components.SceneValueStyle
 import com.activitylock.app.ui.components.UnlockVerifyDialog
 import com.activitylock.app.ui.components.requirementDesc
 import kotlinx.coroutines.Dispatchers
@@ -887,113 +891,153 @@ fun FavoritesScreen(
     }
 
     // ---------- 界面级自动锁闭配置（界面级显式设置 > 全局） ----------
+    // ---------- 界面级自动锁闭（旧版场景行样式：开关 + 延迟值，点值弹层编辑） ----------
     relockCfgRule?.let { rule ->
         val cfgInit = AutoRelock.activityCfg(rule.packageName, rule.activityName)
-        var followU by remember { mutableStateOf(cfgInit?.delayUnlock?.let { it < 0 } ?: true) }
-        var secU by remember { mutableStateOf(cfgInit?.delayUnlock?.takeIf { it >= 0 } ?: AutoRelock.globalDelaySec) }
-        var followE by remember { mutableStateOf(cfgInit?.delayExit?.let { it < 0 } ?: true) }
-        var secE by remember { mutableStateOf(cfgInit?.delayExit?.takeIf { it >= 0 } ?: AutoRelock.globalExitDelaySec) }
-        var followS by remember { mutableStateOf(cfgInit?.delayScreenOff?.let { it < 0 } ?: true) }
-        var secS by remember { mutableStateOf(cfgInit?.delayScreenOff?.takeIf { it >= 0 } ?: AutoRelock.globalScreenOffDelaySec) }
+        var unlockP by remember { mutableStateOf(cfgInit?.unlockParticipate ?: true) }
+        var unlockD by remember { mutableStateOf(cfgInit?.unlockDelaySec ?: -1) }
+        var exitP by remember { mutableStateOf(cfgInit?.exitParticipate ?: true) }
+        var exitD by remember { mutableStateOf(cfgInit?.exitDelaySec ?: -1) }
+        var screenOffP by remember { mutableStateOf(cfgInit?.screenOffParticipate ?: true) }
+        var screenOffD by remember { mutableStateOf(cfgInit?.screenOffDelaySec ?: -1) }
+        var valueLink by remember { mutableStateOf<Int?>(null) }
+        var pendingApply by remember { mutableStateOf<(() -> Unit)?>(null) }
         val label = AppStore.findApp(rule.packageName)?.label
             ?: rule.activityName.substringAfterLast('.')
 
+        fun globalFor(link: Int): Int = when (link) {
+            AutoRelockStore.LINK_EXIT -> AutoRelock.globalExitDelaySec
+            AutoRelockStore.LINK_SCREEN_OFF -> AutoRelock.globalScreenOffDelaySec
+            else -> AutoRelock.globalDelaySec
+        }
+
         fun applyCfg() {
-            val customU = if (followU) -1 else secU
-            val customE = if (followE) -1 else secE
-            val customS = if (followS) -1 else secS
-            // 削弱校验：任一链路的新有效延迟大于旧有效延迟 → 先过验证
-            val olds = listOf(
-                AutoRelock.effectiveDelaySec(rule.packageName, rule.activityName),
-                AutoRelock.effectiveExitDelaySec(rule.packageName, rule.activityName),
-                AutoRelock.effectiveScreenOffDelaySec(rule.packageName, rule.activityName),
-            )
-            val news = listOf(
-                if (followU) AutoRelock.globalDelaySec else secU,
-                if (followE) AutoRelock.globalExitDelaySec else secE,
-                if (followS) AutoRelock.globalScreenOffDelaySec else secS,
-            )
-            val apply = {
-                AutoRelock.setActivityCfg(
-                    ActivityRelockCfg(
-                        pkg = rule.packageName, cls = rule.activityName,
-                        delayUnlock = customU, delayExit = customE, delayScreenOff = customS,
-                    )
+            AutoRelock.setActivityCfg(
+                ActivityRelockCfg(
+                    pkg = rule.packageName,
+                    cls = rule.activityName,
+                    unlockParticipate = unlockP, unlockDelaySec = unlockD,
+                    exitParticipate = exitP, exitDelaySec = exitD,
+                    screenOffParticipate = screenOffP, screenOffDelaySec = screenOffD,
                 )
-                com.activitylock.app.core.AutoRelockService.sync(ctx)
-                AppStore.toast("已保存「" + label + "」的自动锁闭")
-            }
-            val weakened = news.zip(olds).any { (n, o) -> n > o }
-            if (weakened) {
-                val req = VerifyGate.bulkRequirement(ctx, AppStore.rules)
-                if (req.isNone) apply() else relockCfgVerify = apply
-            } else {
-                apply()
-            }
+            )
+            AutoRelockService.sync(ctx)
+            AppStore.toast("已保存「" + label + "」的自动锁闭")
         }
 
         AlertDialog(
             onDismissRequest = { relockCfgRule = null },
-            title = { Text("自动锁闭 · $label") },
+            title = { Text("自动锁闭 · " + label) },
             text = {
                 Column {
                     Text(
-                        "本界面的重锁延迟；「跟随全局」时使用自动锁闭页的全局设置。" +
-                            "界面级设置优先于全局，全局总闸关闭时一律不锁。",
+                        "本界面的重锁时机与延迟；界面级设置优先于全局，全局总闸关闭时一律不锁。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(Modifier.height(12.dp))
-                    Text("解锁后", style = MaterialTheme.typography.titleSmall)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            if (followU) "跟随全局" else "自定义",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.width(72.dp)
-                        )
-                        Switch(checked = !followU, onCheckedChange = { followU = !it })
-                        if (!followU) {
-                            DurationField(seconds = secU, onChange = { secU = it })
-                        }
-                    }
                     Spacer(Modifier.height(10.dp))
-                    Text("退出后", style = MaterialTheme.typography.titleSmall)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            if (followE) "跟随全局" else "自定义",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.width(72.dp)
+                    SceneRowsCard(
+                        rows = listOf(
+                            SceneRowSpec(
+                                name = "解锁后",
+                                valueText = if (unlockD < 0) "跟随全局" else relockDelayLabel(unlockD),
+                                style = if (unlockD < 0) SceneValueStyle.INHERIT else SceneValueStyle.CUSTOM,
+                                checked = unlockP && AutoRelock.relockAfterUnlockEnabled,
+                                onValueClick = { valueLink = AutoRelockStore.LINK_UNLOCK },
+                                onSwitchChange = { on ->
+                                    val apply = { unlockP = on; applyCfg() }
+                                    if (on) apply() else pendingApply = apply
+                                }
+                            ),
+                            SceneRowSpec(
+                                name = "退出后",
+                                valueText = if (exitD < 0) "跟随全局" else relockDelayLabel(exitD),
+                                style = if (exitD < 0) SceneValueStyle.INHERIT else SceneValueStyle.CUSTOM,
+                                checked = exitP && AutoRelock.relockOnExitEnabled,
+                                onValueClick = { valueLink = AutoRelockStore.LINK_EXIT },
+                                onSwitchChange = { on ->
+                                    val apply = { exitP = on; applyCfg() }
+                                    if (on) apply() else pendingApply = apply
+                                }
+                            ),
+                            SceneRowSpec(
+                                name = "锁屏后",
+                                valueText = if (screenOffD < 0) "跟随全局" else relockDelayLabel(screenOffD),
+                                style = if (screenOffD < 0) SceneValueStyle.INHERIT else SceneValueStyle.CUSTOM,
+                                checked = screenOffP && AutoRelock.relockOnScreenOffEnabled,
+                                onValueClick = { valueLink = AutoRelockStore.LINK_SCREEN_OFF },
+                                onSwitchChange = { on ->
+                                    val apply = { screenOffP = on; applyCfg() }
+                                    if (on) apply() else pendingApply = apply
+                                }
+                            ),
                         )
-                        Switch(checked = !followE, onCheckedChange = { followE = !it })
-                        if (!followE) {
-                            DurationField(seconds = secE, onChange = { secE = it })
-                        }
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    Text("锁屏后", style = MaterialTheme.typography.titleSmall)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            if (followS) "跟随全局" else "自定义",
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.width(72.dp)
-                        )
-                        Switch(checked = !followS, onCheckedChange = { followS = !it })
-                        if (!followS) {
-                            DurationField(seconds = secS, onChange = { secS = it })
-                        }
-                    }
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "点时间可改（跟随全局 / 自定义秒分时）；开关关闭 = 该界面此时机不自动重锁。" +
+                            "调大延迟或关闭开关属于削弱，需先通过验证。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    relockCfgRule = null
-                    applyCfg()
-                }) { Text("保存") }
-            },
-            dismissButton = {
-                TextButton(onClick = { relockCfgRule = null }) { Text("取消") }
+                TextButton(onClick = { relockCfgRule = null }) { Text("完成") }
             }
         )
+
+        valueLink?.let { link ->
+            val global = globalFor(link)
+            val (initP, initD) = when (link) {
+                AutoRelockStore.LINK_EXIT -> exitP to exitD
+                AutoRelockStore.LINK_SCREEN_OFF -> screenOffP to screenOffD
+                else -> unlockP to unlockD
+            }
+            val oldEff = if (initP) (if (initD < 0) global else initD) else 0
+            val sceneName = when (link) {
+                AutoRelockStore.LINK_EXIT -> "退出后"
+                AutoRelockStore.LINK_SCREEN_OFF -> "锁屏后"
+                else -> "解锁后"
+            }
+            SceneValueDialog(
+                sceneName = sceneName,
+                allowFollow = true,
+                parentName = "全局",
+                parentSec = global,
+                initFollow = initD < 0,
+                initSec = if (initD < 0) global else initD,
+                onDismiss = { valueLink = null },
+                onConfirm = { follow, sec ->
+                    valueLink = null
+                    val newEff = if (follow) global else sec
+                    val apply = {
+                        when (link) {
+                            AutoRelockStore.LINK_EXIT -> { exitP = true; exitD = if (follow) -1 else sec }
+                            AutoRelockStore.LINK_SCREEN_OFF -> { screenOffP = true; screenOffD = if (follow) -1 else sec }
+                            else -> { unlockP = true; unlockD = if (follow) -1 else sec }
+                        }
+                        applyCfg()
+                    }
+                    // 调大延迟 = 削弱 → 验证
+                    if (newEff > oldEff) pendingApply = apply else apply()
+                }
+            )
+        }
+
+        pendingApply?.let { action ->
+            com.activitylock.app.ui.components.UnlockVerifyDialog(
+                requirement = VerifyGate.bulkRequirement(ctx, AppStore.rules),
+                title = "修改自动锁闭",
+                hint = "削弱自律约束的修改需要先通过验证",
+                enforceWindow = false,
+                onConfirmed = {
+                    pendingApply = null
+                    action()
+                },
+                onDismiss = { pendingApply = null }
+            )
+        }
     }
 
     // ---------- 分组管理：新建 + 逐组重命名 / 删除 ----------
