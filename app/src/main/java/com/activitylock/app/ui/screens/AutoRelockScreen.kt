@@ -38,6 +38,7 @@ import com.activitylock.app.core.AppStore
 import com.activitylock.app.core.AutoRelock
 import com.activitylock.app.core.AutoRelockService
 import com.activitylock.app.core.AutoRelockStore
+import com.activitylock.app.ui.components.DurationField
 
 /**
  * 自动锁闭（自动重锁）设置 —— **仅全局**，一页放得下。
@@ -198,27 +199,20 @@ fun AutoRelockScreen(
             else -> AutoRelock.globalDelaySec
         }
         var text by remember { mutableIntStateOf(current) }
-        var raw by remember { mutableStateOf(current.toString()) }
         AlertDialog(
             onDismissRequest = { valueLink = null },
             title = { Text("「$sceneName」延迟") },
             text = {
                 Column {
                     Text(
-                        "到点自动重新上锁（秒，0 = 立即）",
+                        "到点自动重新上锁（0 = 立即）",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = raw,
-                        onValueChange = {
-                            raw = it.filter { c -> c.isDigit() }.take(9)
-                            raw.toIntOrNull()?.let { v -> text = v }
-                        },
-                        suffix = { Text("秒") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                    DurationField(
+                        seconds = text,
+                        onChange = { text = it }
                     )
                 }
             },

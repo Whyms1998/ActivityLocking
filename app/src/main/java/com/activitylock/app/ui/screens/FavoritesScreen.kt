@@ -28,6 +28,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lock
@@ -520,6 +521,9 @@ fun FavoritesScreen(
                     it.packageName == pkg && it.activityName == cls
                 }?.let { ruleToggle(it, want) }
             },
+            onEdit = { editing = it },
+            onEditUnlock = { editingUnlock = it },
+            onDeleteRequest = { ruleDeleteRequest(it) },
         )
     }
 
@@ -891,6 +895,12 @@ private fun GridDetailDialog(
     onClose: () -> Unit,
     /** 锁定 / 解锁某个界面（走与收藏页列表同一套 LockEngine 逻辑，含解锁验证闸门）。 */
     onToggleLock: (String, Boolean) -> Unit,
+    /** 编辑备注 / 跳转 / 限额。 */
+    onEdit: (LockRule) -> Unit,
+    /** 编辑解锁条件（解锁验证弹层）。 */
+    onEditUnlock: (LockRule) -> Unit,
+    /** 删除（内部走 ruleDeleteRequest，含验证闸门）。 */
+    onDeleteRequest: (LockRule) -> Unit,
 ) {
     val memberRules = AppStore.rules.filter { it.packageName == pkg }
     val label = AppStore.findApp(pkg)?.label ?: pkg.substringAfterLast('.')
@@ -938,6 +948,27 @@ private fun GridDetailDialog(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            IconButton(onClick = { onEditUnlock(rule) }) {
+                                Icon(
+                                    Icons.Default.Key,
+                                    contentDescription = "解锁条件",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            IconButton(onClick = { onEdit(rule) }) {
+                                Icon(
+                                    Icons.Default.Edit,
+                                    contentDescription = "编辑",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            IconButton(onClick = { onDeleteRequest(rule) }) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "删除",
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                             Switch(
