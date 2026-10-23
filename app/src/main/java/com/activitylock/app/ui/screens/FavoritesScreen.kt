@@ -3,6 +3,7 @@ package com.activitylock.app.ui.screens
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -29,12 +30,27 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.AcUnit
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Checkbox
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -65,7 +81,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.activitylock.app.core.AmsController
 import com.activitylock.app.core.AppStore
+import com.activitylock.app.core.AutoRelock
 import com.activitylock.app.core.AutoRelockService
+import com.activitylock.app.core.ActivityRelockCfg
 import com.activitylock.app.core.BlockStats
 import com.activitylock.app.core.ConfigPreset
 import com.activitylock.app.core.LockEngine
@@ -86,6 +104,13 @@ import com.activitylock.app.ui.components.requirementDesc
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+private fun refresh(ctx: android.content.Context) {
+    com.activitylock.app.core.AmsController.writeRules()
+    com.activitylock.app.core.QuotaService.startIfQuotaConfigured(ctx)
+}
+
+
 
 @Composable
 private fun VerifyModeRow(selected: Boolean, title: String, onClick: () -> Unit) {
@@ -151,7 +176,7 @@ private fun GroupHeader(
  * ★ v1.23.0：新增 [onOpenActivityRelock]，用于「应用弹窗 → 界面行 → 界面详情页」
  *   这条**唯一**的高级路径（文档 §14.4/§14.5）。
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun FavoritesScreen(
     onOpenApps: () -> Unit = {},
@@ -168,6 +193,40 @@ fun FavoritesScreen(
     var deleting by remember { mutableStateOf<LockRule?>(null) }
     var pendingUnlock by remember { mutableStateOf<LockRule?>(null) }
     var pendingDelete by remember { mutableStateOf<LockRule?>(null) }
+    /** 正在配置自动锁闭（重锁延迟）的界面。 */
+    var relockCfgRule by remember { mutableStateOf<LockRule?>(null) }
+    /** 界面级自动锁闭削弱修改的验证闸门。 */
+    var relockCfgVerify by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    // ---- 分组 / 搜索 / 多选 / 批量（借鉴雹的首页交互） ----
+    /** null = 全部；"" = 默认（未分组）；其他 = 分组 id。 */
+    var selectedGroup by remember { mutableStateOf<String?>(null) }
+    var searchOpen by remember { mutableStateOf(false) }
+    var searchQ by remember { mutableStateOf("") }
+    var selecting by remember { mutableStateOf(false) }
+    val selectedPkgs = remember { mutableStateMapOf<String, Boolean>() }
+    var menuOpen by remember { mutableStateOf(false) }
+    var groupManage by remember { mutableStateOf<String?>(null) }
+    var showNewGroupFor by remember { mutableStateOf<String?>(null) }
+    var newGroupName by remember { mutableStateOf("") }
+    var pendingBulkUnlock by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    val shownRules = remember(rules, selectedGroup, AppStore.groupAssign, searchQ) {
+        val base = when (selectedGroup) {
+            null -> rules
+            "" -> rules.filter { AppStore.groupAssign[it.packageName] == null }
+            else -> rules.filter { AppStore.groupAssign[it.packageName] == selectedGroup }
+        }
+        if (searchQ.isBlank()) base
+        else base.filter {
+            val lb = AppStore.findApp(it.packageName)?.label ?: it.packageName
+            lb.contains(searchQ, true) || it.packageName.contains(searchQ, true) ||
+                it.note.contains(searchQ, true) || it.activityName.contains(searchQ, true)
+        }
+    }
+    val visiblePkgs = shownRules.map { it.packageName }.distinct()
+    val selectedList = selectedPkgs.filterValues { it }.keys.toList()
+
     var pendingSceneDeactivate by remember { mutableStateOf<Scene?>(null) }
     var gridDetailPkg by remember { mutableStateOf<String?>(null) }
     val expanded = remember { mutableStateMapOf<String, Boolean>() }
@@ -201,7 +260,7 @@ fun FavoritesScreen(
         lastEarlyEnd = FocusState.lastEarlyEnd(ctx)
     }
 
-    fun refresh() {
+    fun refreshPmState() {
         for (r in rules) {
             if (!r.block) {
                 actual["${r.packageName}/${r.activityName}"] =
@@ -210,7 +269,79 @@ fun FavoritesScreen(
         }
     }
 
-    LaunchedEffect(rules, refreshTick) { refresh() }
+    LaunchedEffect(rules, refreshTick) { refreshPmState() }
+
+    fun bulkLock(pkgs: Collection<String>) {
+        scope.launch {
+            var n = 0
+            for (rule in rules.toList()) {
+                if (rule.packageName in pkgs && !rule.locked) {
+                    val o = LockEngine.apply(rule.packageName, rule.activityName, true, rule.redirectUri)
+                    if (o.locked) n++
+                }
+            }
+            AutoRelockService.sync(ctx)
+            AppStore.toast("已锁定 " + n + " 个界面")
+            refreshPmState()
+        }
+    }
+
+
+
+    fun bulkUnlockVerify(pkgs: Collection<String>) {
+        val req = VerifyGate.bulkRequirement(ctx, AppStore.rules)
+        val act: () -> Unit = {
+            scope.launch {
+                var n = 0
+                for (rule in rules.toList()) {
+                    if (rule.packageName in pkgs && rule.locked) {
+                        val o = LockEngine.apply(rule.packageName, rule.activityName, false)
+                        if (!o.locked) n++
+                    }
+                }
+                AutoRelockService.sync(ctx)
+                AppStore.toast("已解锁 " + n + " 个界面")
+                refresh(ctx)
+            }
+        }
+        if (req.isNone) act() else pendingBulkUnlock = act
+    }
+
+    /** FAB：有解锁态 → 一键冻结；全锁定 → 全部解锁（需验证）。 */
+    fun freezeAllAction() {
+        if (rules.any { !it.locked }) {
+            scope.launch {
+                var n = 0
+                for (rule in rules.toList()) {
+                    if (!rule.locked) {
+                        val o = LockEngine.apply(rule.packageName, rule.activityName, true, rule.redirectUri)
+                        if (o.locked) n++
+                    }
+                }
+                AutoRelockService.sync(ctx)
+                AppStore.toast("已全部锁定 " + n + " 个界面")
+                refresh(ctx)
+            }
+        } else {
+            val req = VerifyGate.bulkRequirement(ctx, AppStore.rules)
+            val act: () -> Unit = {
+                scope.launch {
+                    var n = 0
+                    for (rule in rules.toList()) {
+                        if (rule.locked) {
+                            val o = LockEngine.apply(rule.packageName, rule.activityName, false)
+                            if (!o.locked) n++
+                        }
+                    }
+                    AutoRelockService.sync(ctx)
+                    AppStore.toast("已全部解锁 " + n + " 个界面")
+                    refresh(ctx)
+                }
+            }
+            if (req.isNone) act() else pendingBulkUnlock = act
+        }
+    }
+
 
     fun onOutcome(o: LockOutcome) {
         when {
@@ -228,7 +359,7 @@ fun FavoritesScreen(
             scope.launch {
                 onOutcome(LockEngine.apply(rule.packageName, rule.activityName, true, rule.redirectUri))
                 AutoRelockService.sync(ctx)
-                refresh()
+                refreshPmState()
                 busy[ruleKey] = false
             }
         } else if (!VerifyGate.requirementFor(ctx, rule).isNone) {
@@ -250,7 +381,7 @@ fun FavoritesScreen(
                 //   它的全部意义就是「解锁之后还会自己锁回来」；若解锁即退出，这个功能自相矛盾。
                 //   想「临时用一会儿不被锁回」请走**临时解锁**（限时豁免），那才是它该管的事。
                 AutoRelockService.sync(ctx)
-                refresh()
+                refreshPmState()
                 busy[ruleKey] = false
             }
         }
@@ -292,6 +423,7 @@ fun FavoritesScreen(
         }
     }
 
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier
@@ -299,14 +431,94 @@ fun FavoritesScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("工作台", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-            TextButton(onClick = {
-                gridView = !gridView
-                uiPrefs.edit().putBoolean("workbench_grid", gridView).apply()
-            }) { Text(if (gridView) "列表" else "宫格") }
-            IconButton(onClick = { refreshTick++ }) {
-                Icon(Icons.Default.Refresh, contentDescription = "刷新状态")
+            if (selecting) {
+                Text(
+                    "已选择: " + selectedList.size,
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = {
+                    visiblePkgs.forEach { selectedPkgs[it] = true }
+                }) { Text("全选") }
+                TextButton(onClick = {
+                    selectedPkgs.clear()
+                    selecting = false
+                }) { Text("退出") }
+            } else {
+                Text("工作台", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                IconButton(onClick = { searchOpen = !searchOpen; if (!searchOpen) searchQ = "" }) {
+                    Icon(Icons.Default.Search, contentDescription = "搜索")
+                }
+                IconButton(onClick = {
+                    selecting = !selecting
+                    selectedPkgs.clear()
+                }) {
+                    Icon(Icons.Default.Checklist, contentDescription = "多选")
+                }
+                TextButton(onClick = {
+                    gridView = !gridView
+                    uiPrefs.edit().putBoolean("workbench_grid", gridView).apply()
+                }) { Text(if (gridView) "列表" else "宫格") }
+                IconButton(onClick = { refreshTick++ }) {
+                    Icon(Icons.Default.Refresh, contentDescription = "刷新状态")
+                }
+                Box {
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "更多")
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("锁定可见") },
+                            onClick = {
+                                menuOpen = false
+                                bulkLock(if (selectedList.isNotEmpty()) selectedList else visiblePkgs)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("解锁可见") },
+                            onClick = {
+                                menuOpen = false
+                                bulkUnlockVerify(if (selectedList.isNotEmpty()) selectedList else visiblePkgs)
+                            }
+                        )
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("全部锁定") },
+                            onClick = { menuOpen = false; bulkLock(rules.map { it.packageName }) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("全部解锁") },
+                            onClick = { menuOpen = false; bulkUnlockVerify(rules.map { it.packageName }) }
+                        )
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("锁定默认分组") },
+                            onClick = {
+                                menuOpen = false
+                                bulkLock(rules.filter { AppStore.groupAssign[it.packageName] == null }.map { it.packageName })
+                            }
+                        )
+                    }
+                }
             }
+        }
+
+        if (searchOpen && !selecting) {
+            OutlinedTextField(
+                value = searchQ,
+                onValueChange = { searchQ = it },
+                placeholder = { Text("搜索 App 名称 / 包名 / 备注") },
+                singleLine = true,
+                trailingIcon = {
+                    IconButton(onClick = { searchOpen = false; searchQ = "" }) {
+                        Icon(Icons.Default.Close, contentDescription = "关闭搜索")
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+            )
+            Spacer(Modifier.height(6.dp))
         }
 
         QuickPanel(
@@ -316,6 +528,37 @@ fun FavoritesScreen(
             sceneBusy = sceneBusy,
             onToggleScene = { toggleScene(it) },
         )
+
+        // ---- 应用分组标签（借鉴雹）：全部 / 默认 / 自定义；长按管理 ----
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            FilterChip(
+                selected = selectedGroup == null,
+                onClick = { selectedGroup = null },
+                label = { Text("全部") }
+            )
+            FilterChip(
+                selected = selectedGroup == "",
+                onClick = { selectedGroup = "" },
+                label = { Text("默认") }
+            )
+            AppStore.groups.forEach { g ->
+                FilterChip(
+                    selected = selectedGroup == g.id,
+                    onClick = { selectedGroup = g.id },
+                    label = { Text(g.name) },
+                    modifier = Modifier.combinedClickable(
+                        onClick = { selectedGroup = g.id },
+                        onLongClick = { groupManage = g.id }
+                    )
+                )
+            }
+        }
 
         // 一键专注 + 破功回流
         val focusCfg = lastFocusCfg
@@ -363,8 +606,8 @@ fun FavoritesScreen(
                 )
             }
         } else if (gridView) {
-            val byPkg = remember(rules) {
-                rules.groupBy { it.packageName }.mapValues { (_, v) ->
+            val byPkg = remember(shownRules) {
+                shownRules.groupBy { it.packageName }.mapValues { (_, v) ->
                     Pair(v.count { r -> r.locked }, v.size)
                 }
             }
@@ -378,10 +621,19 @@ fun FavoritesScreen(
                     Column(
                         Modifier
                             .padding(6.dp)
-                            .clickable { gridDetailPkg = pkg }
+                            .clickable {
+                                if (selecting) selectedPkgs[pkg] = !(selectedPkgs[pkg] ?: false)
+                                else gridDetailPkg = pkg
+                            }
                             .padding(4.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
+                        if (selecting) {
+                            Checkbox(
+                                checked = selectedPkgs[pkg] == true,
+                                onCheckedChange = { selectedPkgs[pkg] = it }
+                            )
+                        }
                         AppIcon(pkg, 56.dp)
                         Spacer(Modifier.height(4.dp))
                         Text(
@@ -410,8 +662,8 @@ fun FavoritesScreen(
                 }
             }
         } else {
-            val grouped = remember(rules) {
-                rules.sortedBy { it.createdAt }.groupBy { it.packageName }
+            val grouped = remember(shownRules) {
+                shownRules.sortedBy { it.createdAt }.groupBy { it.packageName }
             }
             LazyColumn(Modifier.fillMaxSize()) {
                 grouped.forEach { (pkg, groupRules) ->
@@ -512,6 +764,16 @@ fun FavoritesScreen(
         }
     }
 
+    androidx.compose.material3.ExtendedFloatingActionButton(
+        onClick = { freezeAllAction() },
+        icon = { Icon(Icons.Default.AcUnit, contentDescription = null) },
+        text = { Text(if (rules.any { !it.locked }) "一键冻结" else "全部解锁") },
+        modifier = Modifier
+            .align(Alignment.BottomEnd)
+            .padding(20.dp)
+    )
+    }
+
     gridDetailPkg?.let { pkg ->
         GridDetailDialog(
             pkg = pkg,
@@ -524,6 +786,144 @@ fun FavoritesScreen(
             onEdit = { editing = it },
             onEditUnlock = { editingUnlock = it },
             onDeleteRequest = { ruleDeleteRequest(it) },
+            onRelockConfig = { relockCfgRule = it },
+        )
+    }
+
+    // ---------- 界面级自动锁闭配置（界面级显式设置 > 全局） ----------
+    relockCfgRule?.let { rule ->
+        val cfgInit = AutoRelock.activityCfg(rule.packageName, rule.activityName)
+        var followU by remember { mutableStateOf(cfgInit?.delayUnlock?.let { it < 0 } ?: true) }
+        var secU by remember { mutableStateOf(cfgInit?.delayUnlock?.takeIf { it >= 0 } ?: AutoRelock.globalDelaySec) }
+        var followE by remember { mutableStateOf(cfgInit?.delayExit?.let { it < 0 } ?: true) }
+        var secE by remember { mutableStateOf(cfgInit?.delayExit?.takeIf { it >= 0 } ?: AutoRelock.globalExitDelaySec) }
+        var followS by remember { mutableStateOf(cfgInit?.delayScreenOff?.let { it < 0 } ?: true) }
+        var secS by remember { mutableStateOf(cfgInit?.delayScreenOff?.takeIf { it >= 0 } ?: AutoRelock.globalScreenOffDelaySec) }
+        val label = AppStore.findApp(rule.packageName)?.label
+            ?: rule.activityName.substringAfterLast('.')
+
+        fun applyCfg() {
+            val customU = if (followU) -1 else secU
+            val customE = if (followE) -1 else secE
+            val customS = if (followS) -1 else secS
+            // 削弱校验：任一链路的新有效延迟大于旧有效延迟 → 先过验证
+            val olds = listOf(
+                AutoRelock.effectiveDelaySec(rule.packageName, rule.activityName),
+                AutoRelock.effectiveExitDelaySec(rule.packageName, rule.activityName),
+                AutoRelock.effectiveScreenOffDelaySec(rule.packageName, rule.activityName),
+            )
+            val news = listOf(
+                if (followU) AutoRelock.globalDelaySec else secU,
+                if (followE) AutoRelock.globalExitDelaySec else secE,
+                if (followS) AutoRelock.globalScreenOffDelaySec else secS,
+            )
+            val apply = {
+                AutoRelock.setActivityCfg(
+                    ActivityRelockCfg(
+                        pkg = rule.packageName, cls = rule.activityName,
+                        delayUnlock = customU, delayExit = customE, delayScreenOff = customS,
+                    )
+                )
+                com.activitylock.app.core.AutoRelockService.sync(ctx)
+                AppStore.toast("已保存「" + label + "」的自动锁闭")
+            }
+            val weakened = news.zip(olds).any { (n, o) -> n > o }
+            if (weakened) {
+                val req = VerifyGate.bulkRequirement(ctx, AppStore.rules)
+                if (req.isNone) apply() else relockCfgVerify = apply
+            } else {
+                apply()
+            }
+        }
+
+        AlertDialog(
+            onDismissRequest = { relockCfgRule = null },
+            title = { Text("自动锁闭 · $label") },
+            text = {
+                Column {
+                    Text(
+                        "本界面的重锁延迟；「跟随全局」时使用自动锁闭页的全局设置。" +
+                            "界面级设置优先于全局，全局总闸关闭时一律不锁。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text("解锁后", style = MaterialTheme.typography.titleSmall)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            if (followU) "跟随全局" else "自定义",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.width(72.dp)
+                        )
+                        Switch(checked = !followU, onCheckedChange = { followU = !it })
+                        if (!followU) {
+                            DurationField(seconds = secU, onChange = { secU = it })
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text("退出后", style = MaterialTheme.typography.titleSmall)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            if (followE) "跟随全局" else "自定义",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.width(72.dp)
+                        )
+                        Switch(checked = !followE, onCheckedChange = { followE = !it })
+                        if (!followE) {
+                            DurationField(seconds = secE, onChange = { secE = it })
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text("锁屏后", style = MaterialTheme.typography.titleSmall)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            if (followS) "跟随全局" else "自定义",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.width(72.dp)
+                        )
+                        Switch(checked = !followS, onCheckedChange = { followS = !it })
+                        if (!followS) {
+                            DurationField(seconds = secS, onChange = { secS = it })
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    relockCfgRule = null
+                    applyCfg()
+                }) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { relockCfgRule = null }) { Text("取消") }
+            }
+        )
+    }
+
+    pendingBulkUnlock?.let { action ->
+        com.activitylock.app.ui.components.UnlockVerifyDialog(
+            requirement = VerifyGate.bulkRequirement(ctx, AppStore.rules),
+            title = "批量解锁",
+            hint = "解锁属于削弱自律约束的操作，需要先通过验证",
+            onConfirmed = {
+                pendingBulkUnlock = null
+                action()
+            },
+            onDismiss = { pendingBulkUnlock = null }
+        )
+    }
+
+    relockCfgVerify?.let { action ->
+        com.activitylock.app.ui.components.UnlockVerifyDialog(
+            requirement = VerifyGate.bulkRequirement(ctx, AppStore.rules),
+            title = "修改自动锁闭",
+            hint = "削弱自律约束的修改需要先通过验证",
+            enforceWindow = false,
+            onConfirmed = {
+                relockCfgVerify = null
+                action()
+            },
+            onDismiss = { relockCfgVerify = null }
         )
     }
 
@@ -593,7 +993,7 @@ fun FavoritesScreen(
                     //   `setActivityAllLinks(..., false)`）。理由见 `ruleToggle` 解锁分支的长注释：
                     //   「当前锁态」与「是否参与自动锁闭」解耦，否则「锁屏后自动锁回」永远不生效。
                     AutoRelockService.sync(ctx)
-                    refresh()
+                    refreshPmState()
                     busy[key(rule)] = false
                 }
             },
@@ -629,7 +1029,7 @@ fun FavoritesScreen(
             scope.launch {
                 val o = LockEngine.saveRedirect(rule.packageName, rule.activityName, redirect)
                 if (o != null && !o.locked) AppStore.toast("跳转已保存，但启用拦截失败：${o.detail}")
-                refresh()
+                refreshPmState()
             }
         }
         AlertDialog(
@@ -901,6 +1301,8 @@ private fun GridDetailDialog(
     onEditUnlock: (LockRule) -> Unit,
     /** 删除（内部走 ruleDeleteRequest，含验证闸门）。 */
     onDeleteRequest: (LockRule) -> Unit,
+    /** 配置该界面的自动锁闭（重锁延迟，界面级优先于全局）。 */
+    onRelockConfig: (LockRule) -> Unit,
 ) {
     val memberRules = AppStore.rules.filter { it.packageName == pkg }
     val label = AppStore.findApp(pkg)?.label ?: pkg.substringAfterLast('.')
@@ -961,6 +1363,13 @@ private fun GridDetailDialog(
                                 Icon(
                                     Icons.Default.Edit,
                                     contentDescription = "编辑",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            IconButton(onClick = { onRelockConfig(rule) }) {
+                                Icon(
+                                    Icons.Default.Schedule,
+                                    contentDescription = "自动锁闭",
                                     modifier = Modifier.size(18.dp)
                                 )
                             }

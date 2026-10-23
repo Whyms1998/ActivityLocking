@@ -41,6 +41,11 @@ object AppStore {
     var sessionCfgs by mutableStateOf<List<SessionCfg>>(emptyList())
         private set
 
+    var groups by mutableStateOf<List<AppGroup>>(emptyList())
+        private set
+    var groupAssign by mutableStateOf<Map<String, String>>(emptyMap())
+        private set
+
     /** 应用级解锁条件（pkg -> 条件）。优先级：界面级 > 应用级 > 全局。 */
     var appVerify by mutableStateOf<Map<String, AppVerify>>(emptyMap())
         private set
@@ -51,6 +56,7 @@ object AppStore {
     private lateinit var scheduleStore: ScheduleStore
     private lateinit var sceneStore: SceneStore
     private lateinit var sessionStore: SessionStore
+    private lateinit var groupStore: GroupStore
     private lateinit var appContext: Context
     private val scope = kotlinx.coroutines.CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
 
@@ -69,12 +75,15 @@ object AppStore {
         scheduleStore = ScheduleStore(appContext.filesDir)
         sceneStore = SceneStore(appContext.filesDir)
         sessionStore = SessionStore(appContext.filesDir)
+        groupStore = GroupStore(appContext.filesDir)
         rules = ruleStore.rules
         history = historyStore.entries
         userPresets = presetStore.presets
         schedules = scheduleStore.schedules
         scenes = sceneStore.scenes
         sessionCfgs = sessionStore.entries
+        groups = groupStore.groups
+        groupAssign = groupStore.assignment
         appVerify = ruleStore.appVerify
         // ★ 把「应用级解锁条件」的来源交给 VerifyGate：它的 requirementFor() 是纯静态
         //   调用点极多（磁贴 / 临时解锁 / 场景 / 收藏夹 / 自动锁闭页…），
@@ -207,6 +216,34 @@ object AppStore {
         sessionStore.remove(pkg)
         sessionCfgs = sessionStore.entries
     }
+
+    // ---------------- 应用分组（借鉴雹） ----------------
+
+    fun addGroup(name: String): AppGroup {
+        val g = groupStore.addGroup(name)
+        groups = groupStore.groups
+        return g
+    }
+
+    fun renameGroup(id: String, name: String) {
+        groupStore.renameGroup(id, name)
+        groups = groupStore.groups
+    }
+
+    /** 删除分组：组内应用回到默认分组。 */
+    fun removeGroup(id: String) {
+        groupStore.removeGroup(id)
+        groups = groupStore.groups
+        groupAssign = groupStore.assignment
+    }
+
+    /** 分配应用到分组；groupId = null 表示回到默认分组。 */
+    fun assignGroup(pkg: String, groupId: String?) {
+        groupStore.assign(pkg, groupId)
+        groupAssign = groupStore.assignment
+    }
+
+    fun groupOf(pkg: String): String? = groupAssign[pkg]
 
     fun setSessionEnabled(pkg: String, enabled: Boolean) {
         if (!::sessionStore.isInitialized) return

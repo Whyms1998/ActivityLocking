@@ -23,6 +23,27 @@ import java.io.File
  *   作用域 = 收藏夹（AppStore.rules）里全部条目。三个触发链路：
  *   ① 解锁后重新锁 ② 退出后重新锁 ③ 锁屏后重新锁，各有独立开关与延迟。
  */
+/**
+ * 单个界面的自动锁闭覆盖配置（v2 精简模型）。
+ *
+ * 与旧版三层系统的区别：**没有**逐链路参与开关、没有应用级层、没有自愈机制——
+ * 只有「每条链路的延迟：跟随全局(-1) 或 自定义(>=0)」。
+ * 优先级：界面级显式设置 > 全局；全局总闸关 = 一律不锁（铁律，界面级不能越过）。
+ */
+@Serializable
+data class ActivityRelockCfg(
+    val pkg: String,
+    val cls: String,
+    /** 解锁后重锁延迟（秒），-1 = 跟随全局。 */
+    val delayUnlock: Int = -1,
+    /** 退出后重锁延迟（秒），-1 = 跟随全局。退出链路按包触发，取该包内自定义的最小值。 */
+    val delayExit: Int = -1,
+    /** 锁屏后重锁延迟（秒），-1 = 跟随全局。 */
+    val delayScreenOff: Int = -1,
+) {
+    fun hasOverride(): Boolean = delayUnlock >= 0 || delayExit >= 0 || delayScreenOff >= 0
+}
+
 @Serializable
 data class RelockData(
     /** ① 解锁后重新锁：验证通过解锁后开始计时，到点自动重新上锁。 */
@@ -37,6 +58,8 @@ data class RelockData(
     val globalScreenOffDelaySec: Int = DEFAULT_SCREEN_OFF_DELAY_SEC,
     /** 总开关关闭时的快照，重新打开时原样恢复。 */
     val lastOnScenes: List<Boolean> = emptyList(),
+    /** 界面级覆盖配置（仅显式自定义过延迟的界面）。 */
+    val activities: List<ActivityRelockCfg> = emptyList(),
     val schema: Int = CURRENT_SCHEMA,
 ) {
     companion object {
@@ -55,7 +78,7 @@ data class RelockData(
         const val MAX_DELAY_SEC = 100_000_000
 
         const val NOT_LOCK = -1
-        const val CURRENT_SCHEMA = 4
+        const val CURRENT_SCHEMA = 5
         const val DELAY_UNLOCK = 0
         const val DELAY_EXIT = 1
         const val DELAY_SCREEN_OFF = 2
@@ -163,6 +186,24 @@ class AutoRelockStore(filesDir: File) {
         _data.value = _data.value.copy(globalScreenOffDelaySec = sec.coerceIn(0, RelockData.MAX_DELAY_SEC)); save()
     }
 
+    // ---------------- 界面级覆盖 ----------------
+
+    val activityCfgs: List<ActivityRelockCfg> get() = _data.value.activities
+
+    fun activityCfg(pkg: String?, cls: String): ActivityRelockCfg? =
+        if (pkg == null) null
+        else _data.value.activities.firstOrNull { it.pkg == pkg && it.cls == cls }
+
+    @Synchronized
+    fun setActivityCfg(cfg: ActivityRelockCfg) {
+        val next = _data.value.activities.filterNot { it.pkg == cfg.pkg && it.cls == cfg.cls }
+        _data.value = _data.value.copy(
+            activities = if (cfg.hasOverride()) next + cfg else next,
+            schema = RelockData.CURRENT_SCHEMA,
+        )
+        save()
+    }
+
     /** 指定链路的生效延迟（全局层，pkg/cls 参数仅为兼容旧调用签名）。 */
     fun resolveLockSec(pkg: String?, cls: String?, link: Int): Int {
         val on = when (link) {
@@ -189,7 +230,7 @@ class AutoRelockStore(filesDir: File) {
     companion object {
         const val MAX_DELAY_SEC = 100_000_000
         const val NOT_LOCK = -1
-        const val CURRENT_SCHEMA = 4
+        const val CURRENT_SCHEMA = 5
         const val DELAY_UNLOCK = 0
         const val DELAY_EXIT = 1
         const val DELAY_SCREEN_OFF = 2
@@ -275,9 +316,51 @@ object AutoRelock {
     val anyLinkEnabled: Boolean
         get() = relockAfterUnlockEnabled || relockOnExitEnabled || relockOnScreenOffEnabled
 
-    fun effectiveDelaySec(pkg: String?, cls: String?): Int = globalDelaySec
-    fun effectiveExitDelaySec(pkg: String?, cls: String?): Int = globalExitDelaySec
-    fun effectiveScreenOffDelaySec(pkg: String?, cls: String?): Int = globalScreenOffDelaySec
+    /**
+     * 生效延迟：界面级显式自定义 > 全局。
+     * 退出链路按包触发（cls=null）：取该包内界面自定义的最小值（更早锁 = 更强）。
+     */
+    private fun resolveDelay(pkg: String?, cls: String?, link: Int): Int {
+        val global = when (link) {
+            AutoRelockStore.LINK_EXIT -> globalExitDelaySec
+            AutoRelockStore.LINK_SCREEN_OFF -> globalScreenOffDelaySec
+            else -> globalDelaySec
+        }
+        if (cls != null) {
+            val c = store.activityCfg(pkg, cls)
+            if (c != null) {
+                val v = when (link) {
+                    AutoRelockStore.LINK_EXIT -> c.delayExit
+                    AutoRelockStore.LINK_SCREEN_OFF -> c.delayScreenOff
+                    else -> c.delayUnlock
+                }
+                if (v >= 0) return v
+            }
+        } else if (link == AutoRelockStore.LINK_EXIT) {
+            val customs = store.activityCfgs
+                .filter { it.pkg == pkg && it.delayExit >= 0 }
+                .map { it.delayExit }
+            if (customs.isNotEmpty()) return customs.min()
+        }
+        return global
+    }
+
+    fun effectiveDelaySec(pkg: String?, cls: String?): Int =
+        resolveDelay(pkg, cls, AutoRelockStore.LINK_UNLOCK)
+
+    fun effectiveExitDelaySec(pkg: String?, cls: String?): Int =
+        resolveDelay(pkg, cls, AutoRelockStore.LINK_EXIT)
+
+    fun effectiveScreenOffDelaySec(pkg: String?, cls: String?): Int =
+        resolveDelay(pkg, cls, AutoRelockStore.LINK_SCREEN_OFF)
+
+    fun activityCfg(pkg: String, cls: String): ActivityRelockCfg? =
+        if (storeRef == null) null else store.activityCfg(pkg, cls)
+
+    fun setActivityCfg(cfg: ActivityRelockCfg) {
+        store.setActivityCfg(cfg)
+        refresh()
+    }
 
     /** 待重新锁的界面数（UI 徽标）。 */
     val pendingCount: Int get() = pendingRelock.size
