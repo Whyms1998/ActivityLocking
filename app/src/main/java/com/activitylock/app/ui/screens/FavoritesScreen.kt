@@ -837,7 +837,7 @@ fun FavoritesScreen(
             .offset {
                 val base = Offset(
                     (boxSize.width - fabSize.width - 48.dp.roundToPx()).toFloat(),
-                    (boxSize.height - fabSize.height - 120.dp.roundToPx()).toFloat(),
+                    (boxSize.height - fabSize.height - 64.dp.roundToPx()).toFloat(),
                 )
                 val p0 = fabPos ?: base
                 IntOffset(
@@ -851,7 +851,7 @@ fun FavoritesScreen(
                     change.consume()
                     val base = Offset(
                         (boxSize.width - fabSize.width - 48.dp.roundToPx()).toFloat(),
-                        (boxSize.height - fabSize.height - 120.dp.roundToPx()).toFloat(),
+                        (boxSize.height - fabSize.height - 64.dp.roundToPx()).toFloat(),
                     )
                     val cur = fabPos ?: base
                     fabPos = Offset(
@@ -882,6 +882,11 @@ fun FavoritesScreen(
             onEditUnlock = { editingUnlock = it },
             onDeleteRequest = { ruleDeleteRequest(it) },
             onRelockConfig = { relockCfgRule = it },
+            sessionCfg = AppStore.sessionCfgs.firstOrNull { it.pkg == pkg },
+            onSaveSession = { cfg ->
+                if (cfg == null) AppStore.removeSession(pkg) else AppStore.upsertSession(cfg)
+                com.activitylock.app.core.AmsController.writeRules()
+            },
         )
     }
 
@@ -1545,9 +1550,17 @@ private fun GridDetailDialog(
     onDeleteRequest: (LockRule) -> Unit,
     /** 配置该界面的自动锁闭（重锁延迟，界面级优先于全局）。 */
     onRelockConfig: (LockRule) -> Unit,
+    /** 该包当前的到点跳转配置（null = 未开启）。 */
+    sessionCfg: com.activitylock.app.core.SessionCfg?,
+    /** 保存 / 清除到点跳转配置。 */
+    onSaveSession: (com.activitylock.app.core.SessionCfg?) -> Unit,
 ) {
     val memberRules = AppStore.rules.filter { it.packageName == pkg }
     val label = AppStore.findApp(pkg)?.label ?: pkg.substringAfterLast('.')
+    // 到点跳转（对齐时长限额的 UI）：开关默认关，开启后才显示目标与时长设置
+    var sessionOn by remember(pkg) { mutableStateOf(sessionCfg != null) }
+    var sessionTarget by remember(pkg) { mutableStateOf(sessionCfg?.target ?: "") }
+    var sessionLimitSec by remember(pkg) { mutableStateOf((sessionCfg?.limitMin ?: 5) * 60) }
 
     Dialog(onDismissRequest = onClose) {
         Card(shape = MaterialTheme.shapes.small) {
@@ -1565,6 +1578,66 @@ private fun GridDetailDialog(
                         )
                     }
                     TextButton(onClick = onClose) { Text("关闭") }
+                }
+                Spacer(Modifier.height(8.dp))
+                // ---- 到点跳转（借鉴时长限额 UI）：开关默认关，开启后设置目标与时长 ----
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("到点跳转", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "打开本应用连续满 N 分钟，自动打开学习 App",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = sessionOn,
+                                onCheckedChange = { on ->
+                                    sessionOn = on
+                                    if (on) {
+                                        sessionTarget = sessionTarget.ifBlank { "" }
+                                    } else {
+                                        onSaveSession(null)
+                                    }
+                                }
+                            )
+                        }
+                        if (sessionOn) {
+                            Spacer(Modifier.height(6.dp))
+                            OutlinedTextField(
+                                value = sessionTarget,
+                                onValueChange = { sessionTarget = it },
+                                label = { Text("跳转目标（包名或深链）") },
+                                placeholder = { Text("如 com.tencent.weread 或深链") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Text("连续使用", style = MaterialTheme.typography.labelMedium)
+                            com.activitylock.app.ui.components.DurationField(
+                                seconds = sessionLimitSec,
+                                onChange = { sessionLimitSec = it }
+                            )
+                            TextButton(
+                                onClick = {
+                                    val t = sessionTarget.trim()
+                                    if (t.isEmpty()) {
+                                        AppStore.toast("请先填写跳转目标")
+                                    } else {
+                                        onSaveSession(
+                                            com.activitylock.app.core.SessionCfg(
+                                                pkg = pkg, target = t,
+                                                limitMin = (sessionLimitSec / 60).coerceAtLeast(1)
+                                            )
+                                        )
+                                        AppStore.toast("到点跳转已开启")
+                                    }
+                                }
+                            ) { Text("保存到点跳转") }
+                        }
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
                 Column(
