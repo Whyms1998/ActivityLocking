@@ -882,11 +882,6 @@ fun FavoritesScreen(
             onEditUnlock = { editingUnlock = it },
             onDeleteRequest = { ruleDeleteRequest(it) },
             onRelockConfig = { relockCfgRule = it },
-            sessionCfg = AppStore.sessionCfgs.firstOrNull { it.pkg == pkg },
-            onSaveSession = { cfg ->
-                if (cfg == null) AppStore.removeSession(pkg) else AppStore.upsertSession(cfg)
-                com.activitylock.app.core.AmsController.writeRules()
-            },
         )
     }
 
@@ -1234,6 +1229,11 @@ fun FavoritesScreen(
         var redirectOn by remember(rule) { mutableStateOf(redirect.isNotBlank()) }
         // ★ v1.24.9：每日限额改用统一的时长输入（分钟 / 小时）；0 = 不限
         var quotaSec by remember(rule) { mutableStateOf((rule.quotaMin ?: 0) * 60) }
+        // ---- 到点跳转（默认关；与时长限额同一套 UI）----
+        val sessionExisting = AppStore.sessionCfgs.firstOrNull { it.pkg == rule.packageName }
+        var sessionOn by remember(rule) { mutableStateOf(sessionExisting != null) }
+        var sessionTarget by remember(rule) { mutableStateOf(sessionExisting?.target ?: "") }
+        var sessionLimitSec by remember(rule) { mutableStateOf((sessionExisting?.limitMin ?: 5) * 60) }
         val quotaOver = quotaSec / 60 > 1440
         // ★「弹不出输入法」的直接修复：打开即把焦点放到备注框并**主动唤起键盘**。
         val noteFocus = remember { androidx.compose.ui.focus.FocusRequester() }
@@ -1249,6 +1249,20 @@ fun FavoritesScreen(
                 rule.packageName, rule.activityName,
                 if (quotaSec < 60) null else quotaSec / 60
             )
+            // 到点跳转：开 = 保存配置（秒 → 分钟），关 = 清除
+            if (sessionOn) {
+                val t = sessionTarget.trim()
+                if (t.isNotEmpty()) {
+                    AppStore.upsertSession(
+                        com.activitylock.app.core.SessionCfg(
+                            pkg = rule.packageName, target = t,
+                            limitMin = (sessionLimitSec / 60).coerceAtLeast(1)
+                        )
+                    )
+                }
+            } else {
+                AppStore.removeSession(rule.packageName)
+            }
             // 跳转目标/超额状态影响 Watcher 规则，立即同步；限额需要守护服务
             com.activitylock.app.core.QuotaService.startIfQuotaConfigured(ctx)
             editing = null
@@ -1350,6 +1364,40 @@ fun FavoritesScreen(
                             }
                         },
                     )
+                    Spacer(Modifier.height(12.dp))
+                    // ---- 到点跳转（默认关；开启后才能设置，与时长限额同一套 UI）----
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("到点跳转", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                "打开本应用连续满 N 分钟，自动打开学习 App",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = sessionOn,
+                            onCheckedChange = { sessionOn = it }
+                        )
+                    }
+                    if (sessionOn) {
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedTextField(
+                            value = sessionTarget,
+                            onValueChange = { sessionTarget = it },
+                            label = { Text("跳转目标（包名或深链）") },
+                            placeholder = { Text("如 com.tencent.weread 或深链") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text("连续使用（刷满即跳）", style = MaterialTheme.typography.labelMedium)
+                        DurationField(
+                            seconds = sessionLimitSec,
+                            onChange = { sessionLimitSec = it },
+                            units = listOf(DurationUnit.SEC, DurationUnit.MIN, DurationUnit.HOUR)
+                        )
+                    }
                     Spacer(Modifier.height(12.dp))
                     androidx.compose.material3.OutlinedButton(
                         onClick = { editingUnlock = rule },
@@ -1550,17 +1598,10 @@ private fun GridDetailDialog(
     onDeleteRequest: (LockRule) -> Unit,
     /** 配置该界面的自动锁闭（重锁延迟，界面级优先于全局）。 */
     onRelockConfig: (LockRule) -> Unit,
-    /** 该包当前的到点跳转配置（null = 未开启）。 */
-    sessionCfg: com.activitylock.app.core.SessionCfg?,
-    /** 保存 / 清除到点跳转配置。 */
-    onSaveSession: (com.activitylock.app.core.SessionCfg?) -> Unit,
 ) {
     val memberRules = AppStore.rules.filter { it.packageName == pkg }
     val label = AppStore.findApp(pkg)?.label ?: pkg.substringAfterLast('.')
-    // 到点跳转（对齐时长限额的 UI）：开关默认关，开启后才显示目标与时长设置
-    var sessionOn by remember(pkg) { mutableStateOf(sessionCfg != null) }
-    var sessionTarget by remember(pkg) { mutableStateOf(sessionCfg?.target ?: "") }
-    var sessionLimitSec by remember(pkg) { mutableStateOf((sessionCfg?.limitMin ?: 5) * 60) }
+
 
     Dialog(onDismissRequest = onClose) {
         Card(shape = MaterialTheme.shapes.small) {
@@ -1578,66 +1619,6 @@ private fun GridDetailDialog(
                         )
                     }
                     TextButton(onClick = onClose) { Text("关闭") }
-                }
-                Spacer(Modifier.height(8.dp))
-                // ---- 到点跳转（借鉴时长限额 UI）：开关默认关，开启后设置目标与时长 ----
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("到点跳转", style = MaterialTheme.typography.titleSmall)
-                                Text(
-                                    "打开本应用连续满 N 分钟，自动打开学习 App",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = sessionOn,
-                                onCheckedChange = { on ->
-                                    sessionOn = on
-                                    if (on) {
-                                        sessionTarget = sessionTarget.ifBlank { "" }
-                                    } else {
-                                        onSaveSession(null)
-                                    }
-                                }
-                            )
-                        }
-                        if (sessionOn) {
-                            Spacer(Modifier.height(6.dp))
-                            OutlinedTextField(
-                                value = sessionTarget,
-                                onValueChange = { sessionTarget = it },
-                                label = { Text("跳转目标（包名或深链）") },
-                                placeholder = { Text("如 com.tencent.weread 或深链") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                            Spacer(Modifier.height(6.dp))
-                            Text("连续使用", style = MaterialTheme.typography.labelMedium)
-                            com.activitylock.app.ui.components.DurationField(
-                                seconds = sessionLimitSec,
-                                onChange = { sessionLimitSec = it }
-                            )
-                            TextButton(
-                                onClick = {
-                                    val t = sessionTarget.trim()
-                                    if (t.isEmpty()) {
-                                        AppStore.toast("请先填写跳转目标")
-                                    } else {
-                                        onSaveSession(
-                                            com.activitylock.app.core.SessionCfg(
-                                                pkg = pkg, target = t,
-                                                limitMin = (sessionLimitSec / 60).coerceAtLeast(1)
-                                            )
-                                        )
-                                        AppStore.toast("到点跳转已开启")
-                                    }
-                                }
-                            ) { Text("保存到点跳转") }
-                        }
-                    }
                 }
                 Spacer(Modifier.height(8.dp))
                 Column(
