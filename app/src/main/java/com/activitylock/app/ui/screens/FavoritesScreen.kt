@@ -610,11 +610,7 @@ fun FavoritesScreen(
                 FilterChip(
                     selected = selectedGroup == g.id,
                     onClick = { selectedGroup = g.id },
-                    label = { Text(g.name) },
-                    modifier = Modifier.combinedClickable(
-                        onClick = { selectedGroup = g.id },
-                        onLongClick = { groupManage = g.id }
-                    )
+                    label = { Text(g.name) }
                 )
             }
             FilterChip(
