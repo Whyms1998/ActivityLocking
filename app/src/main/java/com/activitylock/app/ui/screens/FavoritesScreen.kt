@@ -1627,7 +1627,12 @@ private fun GridDetailDialog(
                         .verticalScroll(rememberScrollState())
                 ) {
                     memberRules.forEach { rule ->
-                        Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { onEdit(rule) }
+                                .padding(vertical = 4.dp)
+                        ) {
                             // 第一行：页面名称 + 开关
                             Row(
                                 Modifier.fillMaxWidth(),
