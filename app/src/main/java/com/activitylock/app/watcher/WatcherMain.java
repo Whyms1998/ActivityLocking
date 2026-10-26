@@ -54,6 +54,23 @@ public class WatcherMain {
     static final long SESSION_GAP_MS = 10_000L;      // 前台事件间隔超过此值判定为"离开过"（tick 每 2s，精度足够）
     static final long JUMP_COOLDOWN_MS = 5 * 60_000L; // 跳转后冷静期：切回立即再送
 
+    /**
+     * ★ 自我跳转豁免窗口（v1.28.0）。
+     *
+     * 背景：activityStarting 只拦「显式组件」（cn == null 的隐式深链在第 722 行直接放行），
+     * 所以 ① 「scheme://」这类隐式跳转永远不会命中自己的规则，而
+     *     ② 「组件|scheme://」（显式组件 + data）跳转的目标组件**往往就是被拦的那个**。
+     * 真机 2026-10-26：酷安 coolmarket:// 同时注册在 MainActivity 与 AppLinkActivity
+     * （后者无 authority 限制）→ 隐式写法必弹系统选择器，只能用显式 MainActivity + data；
+     * 而 MainActivity 正是规则里被拦的组件 → 不豁免就会自己拦自己（或被判 BAD-TARGET 抑制 60s）。
+     *
+     * 判据：跳转发出后 [SELF_JUMP_WINDOW_MS] 内，该包**非桌面来源**的启动一律放行。
+     * 用户主动点桌面图标（MAIN + LAUNCHER）不受影响，仍然拦截。
+     */
+    static final long SELF_JUMP_WINDOW_MS = 3_000L;
+    static final java.util.concurrent.ConcurrentHashMap<String, Long> SELF_JUMP_UNTIL =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     /** 离开宽限期（秒）：切出其他 App 后在此时间内回来会接着算，超时重新计时。 */
     static long graceSec(String pkg) {
         Integer g = SESSION_GRACE.get(pkg);
@@ -580,12 +597,18 @@ public class WatcherMain {
     }
 
     static void maybeRedirect(String pkg, Intent intent, String target) {
-        // 深链被应用路由回被锁界面时携带同一深链 data，避免自环
-        if (intent.getData() != null && target.equals(intent.getData().toString())) {
+        // 深链被应用路由回被锁界面时携带同一深链 data，避免自环。
+        // 组合写法「组件|uri」只比 uri 部分（组件每次都会被 mainActivity 透传回来）。
+        int bar = target.indexOf('|');
+        String targetUri = bar > 0 ? target.substring(bar + 1) : target;
+        if (intent.getData() != null && targetUri.equals(intent.getData().toString())) {
             log("REDIRECT skip(self) pkg=" + pkg);
             return;
         }
         log("REDIRECT " + target);
+        // ★ 先开豁免窗口再发：显式组件跳转的目标组件往往就是被拦的那个，
+        //   不豁免会被自己的规则二次拦下（或被判成 BAD-TARGET 抑制 60s）。
+        SELF_JUMP_UNTIL.put(pkg, android.os.SystemClock.elapsedRealtime() + SELF_JUMP_WINDOW_MS);
         REDIRECT_EXEC.execute(() -> {
             // 直连 binder 启动（更快、无子进程开销），失败回退 am start
             if (!startViaBinder(pkg, target)) {
@@ -594,9 +617,25 @@ public class WatcherMain {
         });
     }
 
+    /**
+     * 跳转目标三写法：
+     *   ① {@code scheme://host/path} —— 隐式深链（ACTION_VIEW + data）
+     *   ② {@code pkg/pkg.Cls} 或 {@code .Cls} —— 显式组件（无 data）
+     *   ③ {@code pkg/pkg.Cls|scheme://host/path} —— ★ 显式组件 + data
+     *
+     * ★ ③ 不可省：同一 scheme 注册在多个组件上时，① 会被系统判为二义 → 弹
+     *   ResolverActivity 让用户选（真机 2026-10-26 酷安实测：coolmarket:// 同时注册在
+     *   MainActivity〔带 authority + path〕和 AppLinkActivity〔只有 scheme，无任何限制〕）。
+     *   选择器是系统界面，不受拦截器控制，用户点一下就直接进 App 了 —— 等于放行。
+     */
     static Intent buildTargetIntent(String pkg, String target) {
         Intent i = new Intent();
-        if (target.contains("://")) {
+        int bar = target.indexOf('|');
+        if (bar > 0) {
+            i.setAction("android.intent.action.VIEW");
+            i.setComponent(ComponentName.unflattenFromString(target.substring(0, bar)));
+            i.setData(android.net.Uri.parse(target.substring(bar + 1)));
+        } else if (target.contains("://")) {
             i.setAction("android.intent.action.VIEW");
             i.setData(android.net.Uri.parse(target));
         } else if (target.contains("/")) {
@@ -688,7 +727,13 @@ public class WatcherMain {
     static void startViaAm(String pkg, String target) {
         try {
             String[] cmd;
-            if (target.contains("://")) {
+            int bar = target.indexOf('|');
+            if (bar > 0) {
+                // 显式组件 + data（ProcessBuilder 数组传参不经 shell，'|' 无转义问题）
+                cmd = new String[]{"/system/bin/am", "start", "--user", "0",
+                        "-a", "android.intent.action.VIEW",
+                        "-n", target.substring(0, bar), "-d", target.substring(bar + 1)};
+            } else if (target.contains("://")) {
                 cmd = new String[]{"/system/bin/am", "start", "--user", "0",
                         "-a", "android.intent.action.VIEW", "-d", target};
             } else if (target.contains("/")) {
@@ -741,6 +786,15 @@ public class WatcherMain {
             String full = pkg + "/" + cn.getClassName();
             long now = android.os.SystemClock.elapsedRealtime();
             boolean userLaunch = isUserLaunch(intent);
+
+            // ★ 自我跳转豁免：刚由本拦截器发出的跳转，其目标组件往往就是被拦的那个
+            //   （典型：酷安「组件|深链」写法，目标正是 MainActivity）。放行整条跳转链，
+            //   否则显式组件跳转会被自己的规则二次拦下。用户点桌面图标不受影响（userLaunch）。
+            Long selfUntil = SELF_JUMP_UNTIL.get(pkg);
+            if (!userLaunch && selfUntil != null && now < selfUntil) {
+                log("ALLOW(self-jump) " + flat);
+                return true;
+            }
 
             // 包级超额拦截：额度用完的 App，任何界面启动都拒绝并拉起额度提示页
             String gate = PKG_BLOCKED.get(pkg);

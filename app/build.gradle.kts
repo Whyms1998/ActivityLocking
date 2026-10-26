@@ -13,8 +13,8 @@ android {
         applicationId = "com.activitylock.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 93
-        versionName = "1.27.3"
+        versionCode = 95
+        versionName = "1.28.1"
     }
 
     buildTypes {

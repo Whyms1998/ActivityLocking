@@ -17,6 +17,22 @@ object SchemePresets {
         // —— 核心信息流类 ——
         // 小红书必须带 keyword 参数才会路由到独立搜索页，否则落在首页容器
         SchemePreset("小红书 · 搜索", "xhsdiscover://search/result?keyword=", listOf("com.xingin.matrix")),
+        // ★ 真机验证（2026-10-26）：jike://page.jk/search
+        //   → com.ruguoapp.jike/.bu.search.ui.SearchActivity（独立搜索框，COLD 508ms）
+        //   走 .bu.route.RouteActivity 统一路由，authority 唯一定位，不会弹选择器。
+        SchemePreset("即刻 · 搜索", "jike://page.jk/search", listOf("com.ruguoapp.jike")),
+        // ★ 真机验证（2026-10-26）酷安 —— 三种写法逐一试过，只有第三种成立：
+        //   ① 隐式 coolmarket://com.coolapk.market/search
+        //      → 弹系统选择器。该 scheme 同时注册在 MainActivity〔带 authority + path〕
+        //        和 AppLinkActivity〔只有 scheme、无任何限制〕，隐式 Intent 双匹配。
+        //   ② 纯组件 com.coolapk.market/.view.search.SuperSearchActivity
+        //      → 仅 WARM 时有效（103ms）；COLD 会漂移回 MainActivity，视觉落首页信息流。
+        //   ③ 显式组件 + data（下面这条）
+        //      → 落 SuperSearchActivity，COLD 1942ms ✅
+        //   「组件|uri」这种写法由 WatcherMain.buildTargetIntent 解析。
+        SchemePreset("酷安 · 搜索",
+            "com.coolapk.market/.view.main.MainActivity|coolmarket://com.coolapk.market/search",
+            listOf("com.coolapk.market")),
         // ★ 真机验证（2026-10-13）：
         //   snssdk1128://search?keyword=  → SearchResultActivity（搜索页，可输入）
         //   snssdk1128://search/trending  → BulletContainerActivity（抖音热榜）
@@ -29,7 +45,6 @@ object SchemePresets {
         SchemePreset("微博 · 搜索", "sinaweibo://searchall?q=", listOf("com.sina.weibo")),
         SchemePreset("微博轻享版 · 搜索", "weibointernational://searchall?q=", listOf("com.weico.international")),
         SchemePreset("知乎 · 搜索", "zhihu://search?query=", listOf("com.zhihu.android")),
-        SchemePreset("即刻 · 搜索", "jike://page.jk/search", listOf("com.ruguoapp.jike")),
         SchemePreset("豆瓣 · 搜索", "douban://douban.com/search?q=", listOf("com.douban.frodo")),
         // —— 电商购物类 ——
         SchemePreset("淘宝 · 搜索", "taobao://s.taobao.com/search?q=", listOf("com.taobao.taobao")),

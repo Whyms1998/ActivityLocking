@@ -213,7 +213,18 @@ fun ActivityToggleRow(
             },
             onTest = { uri ->
                 runCatching {
-                    val intent = if (uri.contains("://")) {
+                    val bar = uri.indexOf('|')
+                    val intent = if (bar > 0) {
+                        // ★ 「组件|uri」：显式组件 + data。
+                        //   用于同一 scheme 注册在多个组件上的 App（酷安），
+                        //   隐式写法会被系统判成二义并弹选择器。
+                        Intent(Intent.ACTION_VIEW).apply {
+                            component = android.content.ComponentName
+                                .unflattenFromString(uri.substring(0, bar).trim())
+                                ?: error("组件名格式无效")
+                            data = Uri.parse(uri.substring(bar + 1).trim())
+                        }
+                    } else if (uri.contains("://")) {
                         Intent(Intent.ACTION_VIEW, Uri.parse(uri))
                     } else if (uri.contains('/')) {
                         Intent().setComponent(
@@ -239,6 +250,24 @@ fun ActivityToggleRow(
 private fun validateRedirectTarget(context: android.content.Context, pkg: String, target: String): String? {
     if (target.isBlank()) return null
     val pm = context.packageManager
+    val bar = target.indexOf('|')
+    if (bar > 0) {
+        // ★ 「组件|uri」：显式组件 + data。组件必须存在且 exported（watcher 以 shell 身份启动）；
+        //   data 部分无法静态校验（显式 Intent 不走 filter 匹配），只要求是完整深链。
+        val compPart = target.substring(0, bar).trim()
+        val uriPart = target.substring(bar + 1).trim()
+        if (!uriPart.contains("://")) return "「|」后面要写完整深链，例如 coolmarket://…"
+        val cn2 = if (compPart.contains('/')) {
+            android.content.ComponentName.unflattenFromString(compPart)
+                ?: return "组件名格式无效，应为 包名/完整类名"
+        } else {
+            android.content.ComponentName(pkg, compPart)
+        }
+        val info2 = runCatching { pm.getActivityInfo(cn2, 0) }.getOrNull()
+            ?: return "找不到该界面，请确认类名是否正确"
+        return if (info2.exported) null
+        else "该界面未导出（exported=false），拦截器无法拉起；请改用纯深链写法"
+    }
     if (target.contains("://")) {
         val handled = runCatching {
             pm.resolveActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target)), 0) != null
@@ -333,7 +362,7 @@ private fun LockLauncherDialog(
                         modifier = Modifier.fillMaxWidth(),
                         shape = MaterialTheme.shapes.small,
                         label = { Text("跳转目标") },
-                        placeholder = { Text("深链 xhsdiscover://search 或界面类名") },
+                        placeholder = { Text("深链、界面类名，或 界面类名|深链") },
                         singleLine = true
                     )
                     warning?.let {

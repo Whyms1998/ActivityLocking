@@ -71,14 +71,28 @@ object BuiltinPresets {
             builtin = true,
         ),
         ConfigPreset(
+            // ★ 真机验证（2026-10-26）：jike://page.jk/search 走 .bu.route.RouteActivity
+            //   统一路由，COLD 508ms 落 .bu.search.ui.SearchActivity（独立搜索框）。
+            //   authority 唯一定位（page.jk），不会弹系统选择器。
+            //   ⚠️ 即刻有 14 个 launcher 图标变体（.standard/.pink/.cat/.neon/...，
+            //   换图标功能各占一个 Activity）。这里只锁当前默认的 .standard ——
+            //   若用户在即刻里换了图标，桌面入口会变成别的变体，本规则将不再命中。
             "b_jike", "即刻", "com.ruguoapp.jike", "com.ruguoapp.jike.standard",
-            "jike://page.jk/search", "锁定入口，跳转搜索页（锁定前先测试跳转）",
-            builtin = true,
+            "jike://page.jk/search", "锁定入口，点图标直达搜索页（换过图标则需重新锁定新入口）",
+            verified = true, builtin = true,
         ),
         ConfigPreset(
+            // ★ 真机验证（2026-10-26）推翻旧结论「暂无可直落搜索页的深链」：
+            //   ① 隐式 coolmarket://com.coolapk.market/search → 弹系统选择器
+            //      （该 scheme 同时注册在 MainActivity〔带 authority+path〕与
+            //        AppLinkActivity〔只有 scheme、无限制〕，隐式 Intent 双匹配）
+            //   ② 纯组件 .view.search.SuperSearchActivity → 仅 WARM 有效，
+            //      COLD 会漂移回 MainActivity 并停在首页信息流
+            //   ③ 显式组件 + data（下面这条）→ 稳定落 SuperSearchActivity（COLD 1942ms）✅
             "b_coolapk", "酷安", "com.coolapk.market", "com.coolapk.market.view.main.MainActivity",
-            null, "屏蔽首页（暂无可直落搜索页的深链，纯拦截）",
-            builtin = true,
+            "com.coolapk.market/.view.main.MainActivity|coolmarket://com.coolapk.market/search",
+            "锁定首页，点图标直达搜索页（显式组件+深链，锁定前先测试跳转）",
+            verified = true, builtin = true,
         ),
         ConfigPreset(
             // ★ 真机核对：桌面入口是 .app.ui.activity.LauncherActivity
