@@ -87,22 +87,32 @@ object VerifyGate {
             .putString("password", password)
             // ★ v1.24.9：只做防溢出，不再钉死 5–3600（用户要求自由输入）
             .putInt("delay_sec", safeDelaySec(delaySec))
-            .putInt("quiz_count", quizCount.coerceIn(1, 10))
+            .putInt("quiz_count", quizCount.coerceIn(1, MAX_COUNT))
             .apply()
     }
 
-    /** 全局答题数量（1-10 题）。 */
-    fun quizCount(ctx: Context): Int = prefs(ctx).getInt("quiz_count", 1).coerceIn(1, 10)
+    /**
+     * 题数 / 位数的**防溢出上限**（不是业务限制）。
+     *
+     * ★ v1.29.0：原来全局验证写死 `quiz_count 1..10`、`random_digits 4..12`，
+     *   而界面级解锁条件（[RuleStore]）早就放到 1..999 —— **同一个概念两套上限**，
+     *   于是「界面级能设 50 题、全局只能 10 题」。现在统一到这个上限，
+     *   与「时长不做范围限制、只防溢出」同一条规矩。
+     */
+    const val MAX_COUNT = 999
+
+    /** 全局答题数量（1 – [MAX_COUNT] 题）。 */
+    fun quizCount(ctx: Context): Int = prefs(ctx).getInt("quiz_count", 1).coerceIn(1, MAX_COUNT)
 
     fun setQuizCount(ctx: Context, count: Int) {
-        prefs(ctx).edit().putInt("quiz_count", count.coerceIn(1, 10)).apply()
+        prefs(ctx).edit().putInt("quiz_count", count.coerceIn(1, MAX_COUNT)).apply()
     }
 
-    /** 随机密码位数（4-12 位），默认 6。 */
-    fun randomDigits(ctx: Context): Int = prefs(ctx).getInt("random_digits", 6).coerceIn(4, 12)
+    /** 随机密码位数（1 – [MAX_COUNT] 位），默认 6。 */
+    fun randomDigits(ctx: Context): Int = prefs(ctx).getInt("random_digits", 6).coerceIn(1, MAX_COUNT)
 
     fun setRandomDigits(ctx: Context, digits: Int) {
-        prefs(ctx).edit().putInt("random_digits", digits.coerceIn(4, 12)).apply()
+        prefs(ctx).edit().putInt("random_digits", digits.coerceIn(1, MAX_COUNT)).apply()
     }
 
     // ---- 解锁时间范围：只在设定时段内允许通过验证解锁（自律约束，跨午夜支持）----

@@ -571,7 +571,7 @@ private fun SessionAddDialog(
                 com.activitylock.app.ui.components.DialogImeResize()
                 Column {
                     Text(
-                        "当日第 N 次跳转后锁定该 App（1-99 次）",
+                        "当日第 N 次跳转后锁定该 App",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -582,17 +582,8 @@ private fun SessionAddDialog(
                     label = { Text("次数") },
                     singleLine = true,
                     // ★ v1.24.7：与上面「每日限额」同一套口径 —— 按钮禁用要说理由。
+                    // ★ v1.29.1：删掉常驻的「范围 1 – 99 次」（输入被 take(2) 限死，本来也越不了界）。
                     isError = (customJumpsText.toIntOrNull() ?: 0) !in 1..99,
-                    supportingText = {
-                        Text(
-                            if ((customJumpsText.toIntOrNull() ?: 0) !in 1..99) "只能填 1 – 99 次"
-                            else "范围 1 – 99 次",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if ((customJumpsText.toIntOrNull() ?: 0) !in 1..99)
-                                MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    },
                     modifier = Modifier.fillMaxWidth()
                 )
                 }

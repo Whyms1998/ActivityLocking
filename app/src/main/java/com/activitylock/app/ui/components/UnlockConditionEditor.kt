@@ -146,21 +146,11 @@ fun UnlockConditionEditor(
                             // ★ 合法即即时回调：改完直接点「保存」也不丢值。
                             digits.toIntOrNull()?.takeIf { it in 1..999 }?.let(onQuizCountChange)
                         },
-                        // ★ v1.24.7：与等待秒数同一套口径（草稿态 + 越界标红 + 明示范围），
+                        // ★ v1.24.7：与等待秒数同一套口径（草稿态 + 越界标红），
                         //   不再 `coerceIn(1,10)` 静默改写（输 88 会被悄悄变成 10）。
+                        // ★ v1.29.1：删掉常驻的「范围 1 – 999」，越界只留红框。
                         isError = quizDraft.isNotEmpty() &&
                             quizDraft.toIntOrNull()?.let { it !in 1..999 } == true,
-                        supportingText = {
-                            Text(
-                                if (quizDraft.isNotEmpty() && quizDraft.toIntOrNull()?.let { it !in 1..999 } == true)
-                                    "只能填 1 – 999"
-                                else "范围 1 – 999",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (quizDraft.isNotEmpty() && quizDraft.toIntOrNull()?.let { it !in 1..999 } == true)
-                                    MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        },
                         suffix = { Text("题") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -186,24 +176,14 @@ fun UnlockConditionEditor(
                     OutlinedTextField(
                         value = digitsDraft,
                         onValueChange = { raw ->
-                            val digits = raw.filter { c -> c.isDigit() }.take(2)
+                            val digits = raw.filter { c -> c.isDigit() }.take(3)
                             digitsDraft = digits
                             // ★ 合法即即时回调；越界只标红，绝不静默改写（输 1 不会被跳成 4）。
-                            digits.toIntOrNull()?.takeIf { it in 4..12 }?.let(onRandomDigitsChange)
+                            // ★ v1.29.0：范围从 4–12 放开到 1–999，与全局验证页统一。
+                            digits.toIntOrNull()?.takeIf { it in 1..VerifyGate.MAX_COUNT }?.let(onRandomDigitsChange)
                         },
                         isError = digitsDraft.isNotEmpty() &&
-                            digitsDraft.toIntOrNull()?.let { it !in 4..12 } == true,
-                        supportingText = {
-                            Text(
-                                if (digitsDraft.isNotEmpty() && digitsDraft.toIntOrNull()?.let { it !in 4..12 } == true)
-                                    "只能填 4 – 12"
-                                else "范围 4 – 12",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (digitsDraft.isNotEmpty() && digitsDraft.toIntOrNull()?.let { it !in 4..12 } == true)
-                                    MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        },
+                            digitsDraft.toIntOrNull()?.let { it !in 1..VerifyGate.MAX_COUNT } == true,
                         suffix = { Text("位") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),

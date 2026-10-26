@@ -43,15 +43,28 @@ class AutoRelockService : Service() {
     /** ★ 跨线程读写：主线程（广播）写、executor 线程读，必须 volatile。 */
     @Volatile
     private var screenOn = true
-    /** pkg -> 该包最近一次"已离开前台"的时刻（elapsedRealtime），用于退出延迟链路。
-     *  **只在 executor 线程访问**，避免与 tick 并发迭代抛 ConcurrentModificationException。 */
-    private val exitPending = HashMap<String, Long>()
+
     /**
-     * 锁屏延迟链路：key = "pkg/cls"，value = 该界面被判定"应重新锁"的锁屏时刻。
-     * 到点后若仍是熄屏状态才真正锁回；中途亮屏（用户回来了）则清空、放弃锁回。
+     * 退出延迟链路：pkg → 待锁记录。
+     * ★ v1.29.0（S9）：原来只是 `Long`（离开时刻），服务一被回收就全空；
+     *   现在升级为 [PendingRec] 并落盘，重建后能恢复。
+     * **只在 executor 线程访问**，避免与 tick 并发迭代抛 ConcurrentModificationException。
+     */
+    private val exitPending = LinkedHashMap<String, PendingRec>()
+
+    /**
+     * 锁屏延迟链路：key = "pkg/cls" → 待锁记录。
+     *
+     * ★ v1.29.0（S10）：语义从「连续熄屏 N 分钟」改为**累计熄屏 N 分钟**。
+     *   熄屏时 `since = 熄屏时刻`；亮屏时把这段计进 `accMs` 并把 `since` 置 0（暂停，不清零）。
+     *   原实现亮屏就整批清空，用户中途看一眼时间，30 分钟档永远到不了。
      * **只在 executor 线程访问**。
      */
-    private val screenOffPending = HashMap<String, Long>()
+    private val screenOffPending = LinkedHashMap<String, PendingRec>()
+
+    /** ★ v1.29.0（S9）：待锁表持久化。 */
+    private var pendingStore: RelockPendingStore? = null
+
     private var lastForeground: String = ""
 
     /**
@@ -102,8 +115,11 @@ class AutoRelockService : Service() {
                 }
                 Intent.ACTION_SCREEN_ON -> {
                     screenOn = true
-                    // 用户亮屏回来了 → 放弃「锁屏延迟未到点」的那批，不再锁回
-                    executor?.execute { screenOffPending.clear() }
+                    // ★ v1.29.0（S10）：亮屏只**暂停**熄屏计时，不清零。
+                    //   原实现是整批 clear()（注释写「中途亮屏回来则整批放弃」），
+                    //   于是「熄屏后 30 分钟」只要中途看一眼时间，计时就永久归零重来，
+                    //   30 分钟档在真实使用中几乎不可能到达。
+                    executor?.execute { pauseScreenOffClock() }
                 }
             }
         }
@@ -116,6 +132,13 @@ class AutoRelockService : Service() {
             stopSelf()
             return
         }
+        // ★ v1.29.0（S9）：**必须在 executor 起来之前恢复三张待锁表**，
+        //   否则 tick 第一拍就会读到空表，把整批待锁项当成"不存在"。
+        pendingStore = RelockPendingStore(filesDir)
+        screenOn = runCatching {
+            getSystemService(android.os.PowerManager::class.java).isInteractive
+        }.getOrDefault(true)
+        restorePending()
         // ★ 先建好 executor 再注册广播：onReceive 会把工作 schedule 到 executor，
         //   若注册在前，窗口期内到达的锁屏广播会因 executor 为 null 而静默丢弃。
         val exec = Executors.newSingleThreadScheduledExecutor { r ->
@@ -129,6 +152,47 @@ class AutoRelockService : Service() {
             })
         }
         exec.scheduleWithFixedDelay({ safeTick() }, 0L, TICK_MS, TimeUnit.MILLISECONDS)
+    }
+
+    /**
+     * 从磁盘恢复退出 / 锁屏两张表（解锁后那张由 [AutoRelock] 自己恢复）。
+     *
+     * 判据与 [PendingRec] 注释一致：
+     *  - 同一次开机 → 续算；
+     *  - 跨重启 → elapsed 已重置，判为立即到期；
+     *  - 锁屏链路若记录时正在计时、而此刻屏幕是亮的 → 结算那段后转为暂停。
+     */
+    private fun restorePending() {
+        val snap = pendingStore?.load() ?: return
+        if (snap.exit.isEmpty() && snap.screenOff.isEmpty()) return
+        val now = SystemClock.elapsedRealtime()
+
+        for (r in snap.exit) {
+            exitPending[r.key] = if (BootClock.sameBoot(r.boot)) r
+            else r.copy(accMs = Long.MAX_VALUE / 4, since = 0L)
+        }
+
+        for (r in snap.screenOff) {
+            screenOffPending[r.key] = when {
+                !BootClock.sameBoot(r.boot) ->
+                    r.copy(accMs = Long.MAX_VALUE / 4, since = 0L)
+                // 正在计时段内，但重建这一刻屏幕亮着 → 把这段计入累计，暂停等下次熄屏
+                r.since > 0L && screenOn ->
+                    r.copy(accMs = r.accMs + (now - r.since).coerceAtLeast(0L), since = 0L)
+                else -> r
+            }
+        }
+        persistPending()
+    }
+
+    /** 把退出 / 锁屏两张表写回磁盘（不碰解锁后那张，它由 [AutoRelock] 负责）。 */
+    private fun persistPending() {
+        pendingStore?.update {
+            it.copy(
+                exit = exitPending.values.toList(),
+                screenOff = screenOffPending.values.toList(),
+            )
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
@@ -147,13 +211,41 @@ class AutoRelockService : Service() {
         runCatching { tick() }
     }
 
+    /**
+     * 亮屏时把锁屏链路的计时段结算进 `accMs` 并暂停（S10）。
+     *
+     * 遍历前先取 key 快照 —— 边遍历边改 LinkedHashMap 会抛
+     * ConcurrentModificationException（这条在 tick 线程里抛会静默杀掉整个调度）。
+     */
+    private fun pauseScreenOffClock() {
+        if (screenOffPending.isEmpty()) return
+        val now = SystemClock.elapsedRealtime()
+        var touched = false
+        for (k in screenOffPending.keys.toList()) {
+            val v = screenOffPending[k] ?: continue
+            if (v.since > 0L) {
+                screenOffPending[k] = v.copy(
+                    accMs = v.accMs + (now - v.since).coerceAtLeast(0L),
+                    since = 0L,
+                    wall = System.currentTimeMillis(),
+                    boot = BootClock.mark(),
+                )
+                touched = true
+            }
+        }
+        if (touched) persistPending()
+    }
+
     private fun tick() {
         AppStore.ensureInit(this)
         AutoRelock.init(this)
         // 三个开关都关 或 名单为空 → 不查询（省电）
         if (!AutoRelock.active()) {
-            if (exitPending.isNotEmpty()) exitPending.clear()
-            if (screenOffPending.isNotEmpty()) screenOffPending.clear()
+            if (exitPending.isNotEmpty() || screenOffPending.isNotEmpty()) {
+                exitPending.clear()
+                screenOffPending.clear()
+                persistPending()
+            }
             return
         }
 
@@ -174,10 +266,10 @@ class AutoRelockService : Service() {
         val pend = AutoRelock.pendingRelock
         if (pend.isEmpty()) return
         val now = SystemClock.elapsedRealtime()
-        val due = pend.filter { (key, unlockAt) ->
+        val due = pend.filter { (key, rec) ->
             val (pkg, cls) = AutoRelock.parseKey(key)
             val delay = AutoRelock.effectiveDelaySec(pkg, cls)
-            now - unlockAt >= delay * 1000L
+            rec.isDue(now, delay)
         }.keys.toList()
         if (due.isEmpty()) return
 
@@ -216,23 +308,36 @@ class AutoRelockService : Service() {
         if (changed) updateNotification(noticeText())
     }
 
+    /** 新建一条「从此刻起持续计时」的待锁记录。 */
+    private fun newRec(key: String, lane: Int, since: Long): PendingRec = PendingRec(
+        key = key,
+        lane = lane,
+        accMs = 0L,
+        since = since,
+        wall = System.currentTimeMillis(),
+        boot = BootClock.mark(),
+    )
+
     /** 处理「退出延迟重新锁」。 */
     private fun tickExitDelay() {
         val fg = currentForeground()
         if (fg.isNotEmpty() && fg != lastForeground) {
             val prev = lastForeground
             if (prev.isNotEmpty() && AutoRelock.isTracked(prev, null, AutoRelockStore.LINK_EXIT)) {
-                exitPending[prev] = SystemClock.elapsedRealtime()
+                exitPending[prev] = newRec(prev, AutoRelockStore.LINK_EXIT, SystemClock.elapsedRealtime())
+                persistPending()
             }
-            if (AutoRelock.isTracked(fg, null, AutoRelockStore.LINK_EXIT)) exitPending.remove(fg)
+            if (AutoRelock.isTracked(fg, null, AutoRelockStore.LINK_EXIT) && exitPending.remove(fg) != null) {
+                persistPending()
+            }
             lastForeground = fg
         }
 
         if (exitPending.isEmpty()) return
         val now = SystemClock.elapsedRealtime()
-        val due = exitPending.filter { (pkg, left) ->
+        val due = exitPending.filter { (pkg, rec) ->
             // ★ 退出链路专用延迟（与「解锁后」延迟相互独立）
-            now - left >= AutoRelock.effectiveExitDelaySec(pkg, null) * 1000L
+            rec.isDue(now, AutoRelock.effectiveExitDelaySec(pkg, null))
         }.keys.toList()
         if (due.isEmpty()) return
 
@@ -251,6 +356,8 @@ class AutoRelockService : Service() {
             val ok = runBlocking { AutoRelock.relockOne(pkg, null, AutoRelockStore.LINK_EXIT) }
             if (ok) changed = true else noteFailure("退出后", "$pkg/*")
         }
+        // 无论这次是否真的锁成功，待锁项都已经从表里移除了 → 必须落盘（S9）
+        persistPending()
         if (changed) updateNotification(noticeText())
     }
 
@@ -266,24 +373,47 @@ class AutoRelockService : Service() {
         runCatching {
             AppStore.ensureInit(this)
             AutoRelock.init(this)
-            screenOffPending.clear()
-            if (!AutoRelock.relockOnScreenOffEnabled) return
+            if (!AutoRelock.relockOnScreenOffEnabled) {
+                if (screenOffPending.isNotEmpty()) {
+                    screenOffPending.clear()
+                    persistPending()
+                }
+                return
+            }
             val now = SystemClock.elapsedRealtime()
             var n = 0
+            var touched = false
             for (rule in AppStore.rules.toList()) {
                 if (rule.locked) continue
                 val pkg = rule.packageName
                 val cls = rule.activityName
+                val key = "$pkg/$cls"
                 if (!AutoRelock.isTracked(pkg, cls, AutoRelockStore.LINK_SCREEN_OFF)) continue
-                if (!mayLock("$pkg/$cls")) continue
                 val delay = AutoRelock.effectiveScreenOffDelaySec(pkg, cls)
                 if (delay <= 0) {
+                    // 立即锁：顺手清掉可能存在的旧累计记录，免得下次熄屏带着旧进度秒锁
+                    if (screenOffPending.remove(key) != null) touched = true
+                    if (!mayLock(key)) continue
                     if (runBlocking { AutoRelock.relockOne(pkg, cls) }) n++
-                    else noteFailure("锁屏", "$pkg/$cls")
+                    else noteFailure("锁屏", key)
                 } else {
-                    screenOffPending["$pkg/$cls"] = now
+                    // ★ v1.29.0（S10）：**不再 clear() 整批**，有累计进度就续上。
+                    //   旧实现进来先 clear 再重建，等于每次熄屏都从零开始算 ——
+                    //   配合旧版"亮屏即清空"，30 分钟档几乎不可能到达。
+                    val old = screenOffPending[key]
+                    screenOffPending[key] = if (old == null) {
+                        newRec(key, AutoRelockStore.LINK_SCREEN_OFF, now)
+                    } else {
+                        old.copy(
+                            since = now,
+                            wall = System.currentTimeMillis(),
+                            boot = BootClock.mark(),
+                        )
+                    }
+                    touched = true
                 }
             }
+            if (touched) persistPending()
             if (n > 0) updateNotification("锁屏已重新锁 $n 个界面")
         }
     }
@@ -292,9 +422,9 @@ class AutoRelockService : Service() {
     private fun tickScreenOffDelay() {
         if (screenOffPending.isEmpty()) return
         val now = SystemClock.elapsedRealtime()
-        val due = screenOffPending.filter { (key, at) ->
+        val due = screenOffPending.filter { (key, rec) ->
             val (pkg, cls) = AutoRelock.parseKey(key)
-            now - at >= AutoRelock.effectiveScreenOffDelaySec(pkg, cls) * 1000L
+            rec.isDue(now, AutoRelock.effectiveScreenOffDelaySec(pkg, cls))
         }.keys.toList()
         if (due.isEmpty()) return
         var n = 0
@@ -307,6 +437,7 @@ class AutoRelockService : Service() {
             if (runBlocking { AutoRelock.relockOne(pkg, cls) }) n++
             else noteFailure("锁屏延迟", "$pkg/$cls")
         }
+        persistPending()
         if (n > 0) updateNotification("锁屏延迟到点，已锁 $n 个界面")
     }
 

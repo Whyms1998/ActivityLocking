@@ -257,15 +257,58 @@ object AutoRelock {
     var globalScreenOffDelaySec by mutableStateOf(RelockData.DEFAULT_SCREEN_OFF_DELAY_SEC)
         private set
 
-    /** 当前处于「已解锁但待重新锁」状态的界面：key = "pkg/cls" → 解锁时刻。 */
-    var pendingRelock by mutableStateOf<Map<String, Long>>(emptyMap())
+    /**
+     * 当前处于「已解锁但待重新锁」状态的界面：key = "pkg/cls" → 待锁记录。
+     *
+     * ★ v1.29.0（S9）：值从「解锁时刻 Long」升级为 [PendingRec]。
+     *   原因：Long 只能表达"从某刻起连续计时"，落盘后跨重启无法续算，
+     *   也没法承载锁屏链路的「累计熄屏」语义（S10）。
+     *   [PendingRec] 同时带 elapsed / wall / boot 三要素，重启后能判断是否可续算。
+     */
+    var pendingRelock by mutableStateOf<Map<String, PendingRec>>(emptyMap())
         private set
+
+    /** 待锁表落盘（v1.29.0 / S9）。 */
+    private var pendingStoreRef: RelockPendingStore? = null
 
     fun init(context: Context) {
         if (storeRef != null) return
         ctx = context.applicationContext
         storeRef = AutoRelockStore(ctx.filesDir)
+        pendingStoreRef = RelockPendingStore(ctx.filesDir)
+        restorePending()
         refresh()
+    }
+
+    /**
+     * 从磁盘恢复待锁表。
+     *
+     * 同一次开机 → 原样续算（elapsed 有效）；
+     * 跨了重启 → elapsed 已重置，把 `accMs` 灌满使其立即到期，服务 tick 一到就锁回。
+     * 「宁可早锁」：重启完手机本来就该全部锁上，不存在误伤。
+     */
+    private fun restorePending() {
+        val snap = pendingStoreRef?.load() ?: return
+        if (snap.unlock.isEmpty()) {
+            if (pendingRelock.isNotEmpty()) pendingRelock = emptyMap()
+            return
+        }
+        val map = LinkedHashMap<String, PendingRec>()
+        for (r in snap.unlock) {
+            map[r.key] = if (BootClock.sameBoot(r.boot)) {
+                r.copy(boot = BootClock.mark())
+            } else {
+                // 跨重启：直接判到期（accMs 给到远超任何延迟的量）
+                r.copy(accMs = Long.MAX_VALUE / 4, since = 0L, boot = BootClock.mark())
+            }
+        }
+        pendingRelock = map
+    }
+
+    /** 把当前解锁后待锁表写回磁盘。 */
+    private fun persistUnlock() {
+        pendingStoreRef?.update { it.copy(unlock = pendingRelock.values.toList()) }
+        pendingStoreRef?.clearIfEmpty()
     }
 
     private val store: AutoRelockStore get() = storeRef ?: error("AutoRelock 未初始化")
@@ -285,25 +328,25 @@ object AutoRelock {
 
     fun setRelockAfterUnlock(v: Boolean) {
         store.setRelockAfterUnlockEnabled(v)
-        if (!v) pendingRelock = emptyMap()
+        if (!v) { pendingRelock = emptyMap(); persistUnlock() }
         refresh()
     }
 
     fun setRelockOnExit(v: Boolean) {
         store.setRelockOnExitEnabled(v)
-        if (!v) pendingRelock = emptyMap()
+        if (!v) { pendingRelock = emptyMap(); persistUnlock() }
         refresh()
     }
 
     fun setRelockOnScreenOff(v: Boolean) {
         store.setRelockOnScreenOffEnabled(v)
-        if (!v) pendingRelock = emptyMap()
+        if (!v) { pendingRelock = emptyMap(); persistUnlock() }
         refresh()
     }
 
     fun setAllLinks(enabled: Boolean) {
         store.setAllLinks(enabled)
-        if (!enabled) pendingRelock = emptyMap()
+        if (!enabled) { pendingRelock = emptyMap(); persistUnlock() }
         refresh()
     }
 
@@ -400,7 +443,18 @@ object AutoRelock {
     fun noteUnlocked(pkg: String, cls: String?) {
         if (!relockAfterUnlockEnabled) return
         if (!isTracked(pkg, cls)) return
-        pendingRelock = pendingRelock + (keyOf(pkg, cls) to android.os.SystemClock.elapsedRealtime())
+        val key = keyOf(pkg, cls)
+        // ★ v1.29.0（S9）：wall / boot 一起记 —— 落盘后跨重启才能判断"能不能续算"。
+        val rec = PendingRec(
+            key = key,
+            lane = AutoRelockStore.LINK_UNLOCK,
+            accMs = 0L,
+            since = android.os.SystemClock.elapsedRealtime(),
+            wall = System.currentTimeMillis(),
+            boot = BootClock.mark(),
+        )
+        pendingRelock = pendingRelock + (key to rec)
+        persistUnlock()
     }
 
     /**
@@ -427,13 +481,23 @@ object AutoRelock {
 
     fun noteOpened(pkg: String, cls: String?) {
         val key = keyOf(pkg, cls)
-        if (pendingRelock.containsKey(key)) pendingRelock = pendingRelock - key
+        if (pendingRelock.containsKey(key)) {
+            pendingRelock = pendingRelock - key
+            persistUnlock()
+        }
     }
 
-    fun clearPending() { pendingRelock = emptyMap() }
+    fun clearPending() {
+        if (pendingRelock.isEmpty()) return
+        pendingRelock = emptyMap()
+        persistUnlock()
+    }
 
     fun clearPendingKey(key: String) {
-        if (pendingRelock.containsKey(key)) pendingRelock = pendingRelock - key
+        if (pendingRelock.containsKey(key)) {
+            pendingRelock = pendingRelock - key
+            persistUnlock()
+        }
     }
 
     private fun keyOf(pkg: String, cls: String?): String = "$pkg/${cls ?: "*"}"
@@ -464,7 +528,10 @@ object AutoRelock {
         for (r in targets) {
             if (LockEngine.apply(r.packageName, r.activityName, lock = true).locked) any = true
         }
-        if (any) pendingRelock = pendingRelock - keyOf(pkg, cls)
+        if (any) {
+            pendingRelock = pendingRelock - keyOf(pkg, cls)
+            persistUnlock()
+        }
         return any
     }
 

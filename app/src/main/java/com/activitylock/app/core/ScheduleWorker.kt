@@ -47,6 +47,11 @@ class BootReceiver : BroadcastReceiver() {
         Thread {
             try {
                 AppStore.ensureInit(context)
+                // ★★ v1.29.0（S1）：**必须在这里就把 watcher 拉起来**。
+                //   此前只注册了 WorkManager 巡检，而巡检周期是 15 分钟，Doze / HyperOS
+                //   省电下还可能更久甚至不跑 —— 这段时间里所有开关都亮着，但一条规则都不拦。
+                //   用户感知就是「重启完手机，锁全失效了」。
+                runCatching { AmsController.ensureStarted() }
                 ScheduleWorker.ensureScheduled(context)
                 ScheduleEngine.reconcile(context, killNow = false)
                 FocusEngine.reconcile(context)

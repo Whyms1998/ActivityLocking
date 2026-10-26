@@ -35,6 +35,7 @@ import com.activitylock.app.ui.screens.ScheduleScreen
 import com.activitylock.app.ui.screens.SceneScreen
 import com.activitylock.app.ui.screens.AdminScreen
 import com.activitylock.app.ui.screens.AutoRelockScreen
+import com.activitylock.app.ui.screens.AmnestyScreen
 import com.activitylock.app.ui.screens.LockStrengthScreen
 import com.activitylock.app.ui.screens.FocusScreen
 import com.activitylock.app.ui.screens.StatsScreen
@@ -59,6 +60,8 @@ sealed interface Screen {
     data object Focus : Screen
     data object Admin : Screen
     data object LockStrength : Screen
+    /** v1.29.0：特赦通行证（紧急破例的唯一入口，配额 + 递增）。 */
+    data object Amnesty : Screen
     data object AutoRelock : Screen
     data class Detail(val packageName: String) : Screen
     /** 界面详情页（文档 §14.5）：单个 Activity 的自动锁闭 + 解锁验证。 */
@@ -68,11 +71,22 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // ★ v1.29.0：磁贴等外部入口统一走「拉起主页 + 指定落地页」，
+        //   避免再开一个平行的验证页（两套 UI 必然出现两套配额，进而被绕过）。
+        val initial: Screen = when (intent?.getStringExtra(EXTRA_SCREEN)) {
+            SCREEN_AMNESTY -> Screen.Amnesty
+            else -> Screen.Favorites
+        }
         setContent {
             ActivityLockTheme {
-                AppRoot()
+                AppRoot(initial)
             }
         }
+    }
+
+    companion object {
+        const val EXTRA_SCREEN = "extra_screen"
+        const val SCREEN_AMNESTY = "amnesty"
     }
 }
 
@@ -89,8 +103,13 @@ private fun switchTab(stack: MutableList<Screen>, target: Screen, current: Scree
 }
 
 @Composable
-private fun AppRoot() {
-    val stack = remember { mutableStateListOf<Screen>(Screen.Favorites) }
+private fun AppRoot(initial: Screen = Screen.Favorites) {
+    // 栈底永远是顶层页：从磁贴直接落到二级页时，返回键要能退回主页而不是崩掉。
+    val stack = remember {
+        mutableStateListOf<Screen>(Screen.Favorites).apply {
+            if (initial != Screen.Favorites) add(initial)
+        }
+    }
     val current = stack.last()
     val topLevel = isTopLevel(current)
 
@@ -154,6 +173,7 @@ private fun AppRoot() {
                     onOpenFocus = { stack.add(Screen.Focus) },
                     onOpenAdmin = { stack.add(Screen.Admin) },
                     onOpenStrength = { stack.add(Screen.LockStrength) },
+                    onOpenAmnesty = { stack.add(Screen.Amnesty) },
                     onOpenAutoRelock = { stack.add(Screen.AutoRelock) }
                 )
                 Screen.Verify -> com.activitylock.app.ui.screens.VerifySettingsScreen(
@@ -191,6 +211,9 @@ private fun AppRoot() {
                     onBack = { stack.removeAt(stack.size - 1) }
                 )
                 Screen.LockStrength -> LockStrengthScreen(
+                    onBack = { stack.removeAt(stack.size - 1) }
+                )
+                Screen.Amnesty -> AmnestyScreen(
                     onBack = { stack.removeAt(stack.size - 1) }
                 )
                 Screen.AutoRelock -> AutoRelockScreen(

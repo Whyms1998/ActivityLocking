@@ -395,24 +395,15 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                                 OutlinedTextField(
                                     value = quizText,
                                     onValueChange = { raw ->
-                                        quizText = raw.filter { c -> c.isDigit() }.take(2)
+                                        quizText = raw.filter { c -> c.isDigit() }.take(3)
                                     },
                                     suffix = { Text("题") },
                                     singleLine = true,
-                                    placeholder = { Text("1-10") },
-                                    isError = quizText.isNotEmpty() && quizText.toIntOrNull()?.let { it !in 1..10 } == true,
-                                    // ★ v1.24.7 统一：范围从 placeholder 提到常驻文案，
-                                    //   并在越界时说清「只能填」而不是让用户猜。
-                                    supportingText = {
-                                        Text(
-                                            if (quizText.isNotEmpty() && quizText.toIntOrNull()?.let { it !in 1..10 } == true)
-                                                "只能填 1 – 10 题" else "范围 1 – 10 题",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = if (quizText.isNotEmpty() && quizText.toIntOrNull()?.let { it !in 1..10 } == true)
-                                                MaterialTheme.colorScheme.error
-                                            else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    },
+                                    placeholder = { Text("3") },
+                                    // ★ v1.29.0：上限从 10 放开到 999，与界面级解锁条件（RuleStore）统一。
+                                    // ★ v1.29.1：删掉常驻的「1 – 999 题（建议 3 – 5）」——越界只留红框，
+                                    //   不再在输入框下面堆说明。
+                                    isError = quizText.isNotEmpty() && quizText.toIntOrNull()?.let { it !in 1..VerifyGate.MAX_COUNT } == true,
                                     textStyle = MaterialTheme.typography.bodyMedium
                                         .copy(fontFeatureSettings = "tnum", textAlign = androidx.compose.ui.text.style.TextAlign.Center),
                                     modifier = Modifier.width(80.dp)
@@ -423,7 +414,7 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                                         raw = quizText,
                                         oldVal = VerifyGate.quizCount(ctx),
                                         min = 1,
-                                        max = 10,
+                                        max = VerifyGate.MAX_COUNT,
                                         unitLabel = " 题",
                                         onOk = { v ->
                                             quizCount = v
@@ -457,23 +448,15 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                                 OutlinedTextField(
                                     value = digitsText,
                                     onValueChange = { raw ->
-                                        digitsText = raw.filter { c -> c.isDigit() }.take(2)
+                                        digitsText = raw.filter { c -> c.isDigit() }.take(3)
                                     },
                                     suffix = { Text("位") },
                                     singleLine = true,
-                                    placeholder = { Text("4-12") },
-                                    isError = digitsText.isNotEmpty() && digitsText.toIntOrNull()?.let { it !in 4..12 } == true,
-                                    // ★ v1.24.7 统一：同上面两处，常驻范围文案 + 越界明示
-                                    supportingText = {
-                                        Text(
-                                            if (digitsText.isNotEmpty() && digitsText.toIntOrNull()?.let { it !in 4..12 } == true)
-                                                "只能填 4 – 12 位" else "范围 4 – 12 位",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = if (digitsText.isNotEmpty() && digitsText.toIntOrNull()?.let { it !in 4..12 } == true)
-                                                MaterialTheme.colorScheme.error
-                                            else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    },
+                                    placeholder = { Text("6") },
+                                    // ★ v1.29.0：上限从 12 放开到 999。界面级解锁条件早就允许 999，
+                                    //   只有全局这一处还卡着，同一个概念两套上限。
+                                    // ★ v1.29.1：删掉常驻范围/建议文案。
+                                    isError = digitsText.isNotEmpty() && digitsText.toIntOrNull()?.let { it !in 1..VerifyGate.MAX_COUNT } == true,
                                     textStyle = MaterialTheme.typography.bodyMedium
                                         .copy(fontFeatureSettings = "tnum", textAlign = androidx.compose.ui.text.style.TextAlign.Center),
                                     modifier = Modifier.width(80.dp)
@@ -483,8 +466,8 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                                     submitNumeric(
                                         raw = digitsText,
                                         oldVal = VerifyGate.randomDigits(ctx),
-                                        min = 4,
-                                        max = 12,
+                                        min = 1,
+                                        max = VerifyGate.MAX_COUNT,
                                         unitLabel = " 位",
                                         onOk = { v ->
                                             randomDigits = v

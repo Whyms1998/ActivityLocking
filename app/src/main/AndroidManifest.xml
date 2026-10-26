@@ -71,6 +71,14 @@
             android:exported="true"
             android:theme="@style/Theme.UnlockGate" />
 
+        <!-- 特赦磁贴的直达验证页：透明背景，只显示验证卡片，通过即放行并关闭。
+             exported=false —— 只由本应用的磁贴服务内部拉起，不允许外部唤起。 -->
+        <activity
+            android:name=".AmnestyApplyActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.UnlockGate" />
+
         <receiver
             android:name=".core.AdminReceiver"
             android:description="@string/admin_description"
@@ -89,7 +97,7 @@
             android:name=".core.TempUnlockTileService"
             android:exported="true"
             android:icon="@drawable/ic_tile_key"
-            android:label="临时解锁"
+            android:label="特赦"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />

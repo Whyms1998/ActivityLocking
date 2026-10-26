@@ -27,15 +27,19 @@ import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.HistoryToggleOff
 import androidx.compose.material.icons.filled.HourglassBottom
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.LockClock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -46,7 +50,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import com.activitylock.app.R
+import com.activitylock.app.core.LockAllTileService
 import com.activitylock.app.core.ShizukuManager
+import com.activitylock.app.core.TempUnlockTileService
+import com.activitylock.app.core.UnlockAllTileService
 import kotlinx.coroutines.delay
 
 private fun shizukuStatusText(): String = when {
@@ -69,8 +77,12 @@ fun SettingsScreen(
     onOpenFocus: () -> Unit,
     onOpenAdmin: () -> Unit,
     onOpenStrength: () -> Unit,
+    onOpenAmnesty: () -> Unit,
     onOpenAutoRelock: () -> Unit,
 ) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    /** ★ v1.29.0：控制中心磁贴的重新添加入口。 */
+    var showTiles by remember { mutableStateOf(false) }
     // Shizuku 状态实时刷新，显示在「连接」入口的副标题里。
     // （原先这段轮询算了值却没有任何地方消费，属于无效刷新。）
     var status by remember { mutableStateOf(shizukuStatusText()) }
@@ -103,8 +115,16 @@ fun SettingsScreen(
         )
         SettingsEntry(
             icon = Icons.Default.Policy,
-            title = "锁定强度",
+            title = "计划与豁免",
             onClick = onOpenStrength
+        )
+        // ★ v1.29.0：特赦的唯一入口就放在这里（用户明确要求「藏在设置里」）。
+        //   它不是一个新开关，而是「日常验证可以设得很难」的前提：
+        //   真需要时有这一条有配额的破例路径。
+        SettingsEntry(
+            icon = Icons.Default.LockOpen,
+            title = "特赦通行证",
+            onClick = onOpenAmnesty
         )
 
         // ---------- 自动执行 ----------
@@ -179,6 +199,17 @@ fun SettingsScreen(
             title = "防卸载保护",
             onClick = onOpenAdmin
         )
+        // ★ v1.29.0：磁贴"消失"的真相与修复入口。
+        //   真机排查：三个 TileService 在 manifest 里一直注册着（query-services 可见），
+        //   但 `settings get secure sysui_qs_tiles` 里一条都不在 ——
+        //   应用更新后系统会清掉控制中心里的 custom tile 条目。
+        //   用户感知是「磁贴被去除了」，其实是控制中心里的条目丢了，代码和声明都没动过。
+        SettingsEntry(
+            icon = Icons.Default.Apps,
+            title = "控制中心磁贴",
+            subtitle = "添加上锁 / 解锁 / 特赦",
+            onClick = { showTiles = true }
+        )
         Spacer(Modifier.height(24.dp))
         Text(
             "应用锁 v${com.activitylock.app.BuildConfig.VERSION_NAME}",
@@ -189,6 +220,110 @@ fun SettingsScreen(
                 .padding(bottom = 24.dp),
             textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
+    }
+
+    // ★ v1.29.0：磁贴重新添加。用系统标准的 requestAddTileService（API 33+），
+    //   它会弹出系统自己的「添加到控制中心」确认，不需要我们自己模拟拖拽。
+    if (showTiles) {
+        AlertDialog(
+            onDismissRequest = { showTiles = false },
+            title = { Text("控制中心磁贴") },
+            text = {
+                Column {
+                    Text(
+                        "三个磁贴一直都在，但应用更新后系统会把它们从控制中心里移除。" +
+                            "点「添加」放回去（Android 13+ 会弹一次系统确认）。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    TileRow("特赦", "剩几次 + 本次放行时长；点按直达特赦页") {
+                        requestAddTile(ctx, TempUnlockTileService::class.java, "特赦", R.drawable.ic_tile_key)
+                    }
+                    TileRow("全部上锁", "把所有已配置界面立即锁上") {
+                        requestAddTile(ctx, LockAllTileService::class.java, "全部上锁", R.drawable.ic_tile_lock)
+                    }
+                    TileRow("全部解锁", "把全部界面置为解锁（需通过解锁验证）") {
+                        requestAddTile(ctx, UnlockAllTileService::class.java, "全部解锁", R.drawable.ic_tile_unlock)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showTiles = false }) { Text("关闭") }
+            }
+        )
+    }
+}
+
+/** 磁贴列表的一行：名称 + 一句说明 + 「添加」。 */
+@Composable
+private fun TileRow(title: String, desc: String, onAdd: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+            Text(
+                desc,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+        }
+        TextButton(onClick = onAdd) { Text("添加") }
+    }
+}
+
+/**
+ * 请求把某个磁贴加回控制中心。
+ *
+ * ★ v1.29.0 实测结论：`TileService.requestAddTileService` 虽然是 API 33 的 public API，
+ *   但本机 `android-36/android.jar` 的公开 stubs 里**没有它**
+ *   （javap 只列出 requestListeningState）→ 直接调用编译不过。
+ *   所以这里走反射：方法存在就弹系统的「添加到控制中心」确认，不存在就降级提示手动添加。
+ *
+ * 不要自己弹「已添加」的假提示 —— 系统不认这个组件时磁贴照样不会出现，
+ * 那就成了又一个"看着成功、实际没生效"。
+ */
+private fun requestAddTile(
+    ctx: android.content.Context,
+    cls: Class<*>,
+    label: String,
+    iconRes: Int,
+) {
+    val hint = "请长按控制中心空白处 → 编辑，把「$label」拖进去"
+    if (android.os.Build.VERSION.SDK_INT < 33) {
+        android.widget.Toast.makeText(ctx, hint, android.widget.Toast.LENGTH_LONG).show()
+        return
+    }
+    val ok = runCatching {
+        val cbCls = Class.forName("android.service.quicksettings.TileService\$OutcomeCallback")
+        val m = android.service.quicksettings.TileService::class.java.getMethod(
+            "requestAddTileService",
+            android.content.ComponentName::class.java,
+            CharSequence::class.java,
+            android.graphics.drawable.Icon::class.java,
+            java.util.concurrent.Executor::class.java,
+            cbCls,
+        )
+        // 回调是 @NonNull 参数，传 null 可能炸 → 用动态代理给一个空实现。
+        val cb = java.lang.reflect.Proxy.newProxyInstance(
+            cbCls.classLoader, arrayOf(cbCls)
+        ) { _, _, _ -> null }
+        m.invoke(
+            null,
+            android.content.ComponentName(ctx, cls),
+            label,
+            android.graphics.drawable.Icon.createWithResource(ctx, iconRes),
+            ctx.mainExecutor,
+            cb,
+        )
+        true
+    }.getOrDefault(false)
+    if (!ok) {
+        android.widget.Toast.makeText(ctx, "无法自动添加，$hint", android.widget.Toast.LENGTH_LONG).show()
     }
 }
 

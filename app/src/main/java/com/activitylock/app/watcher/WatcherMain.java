@@ -391,7 +391,13 @@ public class WatcherMain {
             String raw = sb.toString();
             // ★ 内容未变 → 直接返回，不解析、不写日志
             if (raw.equals(LAST_RULES_RAW)) return;
-            LAST_RULES_RAW = raw;
+            // ★★ v1.29.0（S2）：**先解析成功，最后才更新缓存**。
+            //   原实现是「先 LAST_RULES_RAW = raw，再 new JSONArray(raw)」——
+            //   而 AmsController.writeRules() 是 writeText 非原子覆盖，watcher 又每 2 秒读一次，
+            //   完全可能读到半截 JSON。解析抛异常 → 被最外层 catch 静默吞掉，
+            //   但缓存里已经是那份坏内容了：下一拍读到同样内容直接 return，**永不重试**。
+            //   表现就是「改了设置没生效，再打开还是没生效」，且不可复现。
+            //   现在缓存只在全部字段落地后更新，坏内容不会被记住，下一拍自动重试。
             org.json.JSONArray arr = new org.json.JSONArray(raw);
             log("reload file: " + raw.substring(0, Math.min(raw.length(), 200)));
             ConcurrentHashMap<String, String> next = new ConcurrentHashMap<>();
@@ -462,6 +468,8 @@ public class WatcherMain {
                 + " g=" + (GLOBAL_EXEMPT_UNTIL > 0 ? 1 : 0));
             // 规则变化（可能换了跳转目标）→ 解除坏目标抑制，给新目标机会
             SUPPRESS_UNTIL.clear();
+            // ★★ v1.29.0（S2）：全部字段已落地，此刻才认这份内容为「已应用」。
+            LAST_RULES_RAW = raw;
         } catch (Throwable ignored) {
         }
     }
