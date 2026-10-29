@@ -131,7 +131,7 @@ fun QuotaScreen(onBack: () -> Unit) {
             } else {
                 Text(
                     "屏幕亮着时每分钟统计一次；超额后点图标会看到额度提示页，次日 0 点重置。\n" +
-                        "每日解锁次数按「验证通过并放行」计数，用满同样整包拦到额度页。\n" +
+                        "每日打开次数：每次打开该 App 计 1 次（含跳转直达、验证解锁），用满同样整包拦到额度页。\n" +
                         "手动解锁（通过该界面的解锁条件验证）优先于限额。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -213,7 +213,7 @@ fun QuotaScreen(onBack: () -> Unit) {
                     Text("还没有限额", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "点右上角「＋」为已锁定规则的 App 设置每日上限：可用时长（例如抖音每天 20 分钟）、解锁次数，或两者都限。",
+                        "点右上角「＋」为已锁定规则的 App 设置每日上限：可用时长（例如抖音每天 20 分钟）、打开次数，或两者都限。",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -224,7 +224,9 @@ fun QuotaScreen(onBack: () -> Unit) {
                         val min = timeQuota[pkg]
                         val cnt = cntQuota[pkg]
                         val used = if (hasPermission) UsageTracker.todayMinutes(context, pkg) else 0
-                        val cntUsed = QuotaState.usedCounts(context)[pkg] ?: 0
+                        // ★ v1.31.0：次数口径 = 打开次数（系统事件统计，与 QuotaService 一致）
+                        val entryCls = AppStore.findApp(pkg)?.activities?.firstOrNull { it.isLauncher }?.cls
+                        val cntUsed = if (hasPermission) UsageTracker.todayOpenCount(context, pkg, entryCls) else 0
                         val overTime = min != null && used >= min
                         val overCnt = cnt != null && cntUsed >= cnt
                         val label = AppStore.findApp(pkg)?.label ?: pkg.substringAfterLast('.')
@@ -247,8 +249,8 @@ fun QuotaScreen(onBack: () -> Unit) {
                                     }
                                     if (cnt != null) {
                                         Text(
-                                            if (overCnt) "今日已解锁 $cntUsed/$cnt 次（已超额）"
-                                            else "今日已解锁 $cntUsed/$cnt 次",
+                                            if (overCnt) "今日已打开 $cntUsed/$cnt 次（已超额）"
+                                            else "今日已打开 $cntUsed/$cnt 次",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = if (overCnt) MaterialTheme.colorScheme.error
                                             else MaterialTheme.colorScheme.onSurfaceVariant
@@ -316,7 +318,7 @@ fun QuotaScreen(onBack: () -> Unit) {
             title = { Text("移除每日限额？") },
             text = { Text(
                 if (over) "「${AppStore.findApp(pkg)?.label ?: pkg}」今日已超额。移除限额将立刻恢复该 App 的使用，需要先通过验证。"
-                else "「${AppStore.findApp(pkg)?.label ?: pkg}」将不再限制每日使用时长与解锁次数。"
+                else "「${AppStore.findApp(pkg)?.label ?: pkg}」将不再限制每日使用时长与打开次数。"
             ) },
             confirmButton = {
                 TextButton(onClick = {
@@ -353,7 +355,6 @@ private fun clearPkgQuota(rules: List<LockRule>, pkg: String, ctx: android.conte
         AppStore.updateQuota(r.packageName, r.activityName, null)
         AppStore.updateQuotaCnt(r.packageName, r.activityName, null)
     }
-    QuotaState.clearCount(ctx, pkg)
 }
 
 @Composable
@@ -369,7 +370,7 @@ private fun QuotaAddDialog(
     var limitSec by remember { mutableStateOf(20 * 60) }
     val limitMin = limitSec / 60
     val overDay = limitMin > 1440
-    // ★ v1.30.0：每日解锁次数（可留空 = 不限次数）
+    // ★ v1.31.0：每日打开次数（可留空 = 不限；计数 = 系统事件统计的入口界面打开数）
     var cntText by remember { mutableStateOf("") }
     val cntVal = cntText.toIntOrNull()
     val cntInvalid = cntText.isNotBlank() && (cntVal == null || cntVal !in 1..999)
@@ -417,14 +418,18 @@ private fun QuotaAddDialog(
                 OutlinedTextField(
                     value = cntText,
                     onValueChange = { cntText = it.filter { c -> c.isDigit() }.take(3) },
-                    label = { Text("每日解锁次数（留空不限）") },
+                    label = { Text("每日打开次数（留空不限）") },
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Done
+                    ),
                     singleLine = true,
                     isError = cntInvalid,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "按「验证通过并放行」计数；用满后当天拦截该 App",
+                    "每次打开该 App 计 1 次（含跳转直达）；用满后当天拦截",
                     style = MaterialTheme.typography.labelSmall,
                     color = if (cntInvalid) MaterialTheme.colorScheme.error
                     else MaterialTheme.colorScheme.onSurfaceVariant

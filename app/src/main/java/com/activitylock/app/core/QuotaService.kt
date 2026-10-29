@@ -117,6 +117,19 @@ class QuotaService : Service() {
                     ShizukuManager.run("am", "force-stop", pkg)
                 }
             }
+            // ★ v1.31.0：次数维度改「打开次数」——系统事件统计（ UsageTracker.todayOpenCount），
+            //   无论验证解锁、跳转直达还是通知点开，打开即计 1 次（60s 粒度）。
+            //   旧口径「验证放行才计数」覆盖不了跳转直达的包（点图标进搜索页不经验证，永远不计）。
+            for ((pkg, limit) in cntQuota) {
+                if (pkg in over) continue
+                val opens = UsageTracker.todayOpenCount(this, pkg, entryClsOf(pkg))
+                if (opens >= limit) {
+                    QuotaState.markOver(this, pkg)
+                    crossedNow = true
+                    notifyCntExceeded(pkg, opens, limit)
+                    ShizukuManager.run("am", "force-stop", pkg)
+                }
+            }
             if (crossedNow) AmsController.writeRules()
             // 已超额的包（含升级前标记的）持续补写包级拦截条目
             if (QuotaState.overPackages(this).isNotEmpty()) AmsController.writeRules()
@@ -162,8 +175,25 @@ class QuotaService : Service() {
         getSystemService(NotificationManager::class.java).notify(NOTIFY_EXCEEDED_ID, n)
     }
 
+    /** ★ v1.31.0：次数维度超额通知。 */
+    private fun notifyCntExceeded(pkg: String, used: Int, limit: Int) {
+        val label = AppStore.findApp(pkg)?.label ?: pkg.substringAfterLast('.')
+        val n = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("「$label」今日打开次数已用完")
+            .setContentText("已打开 $used/$limit 次，明日 0 点重置")
+            .setAutoCancel(true)
+            .build()
+        getSystemService(NotificationManager::class.java).notify(NOTIFY_EXCEEDED_ID, n)
+    }
+
     companion object {
         private const val CHANNEL_ID = "quota_watch"
+
+        /** 该包的桌面入口类名（「打开次数」的计数锚点；扫不到为 null 时退化为前台会话数）。 */
+        private fun entryClsOf(pkg: String): String? =
+            AppStore.findApp(pkg)?.activities?.firstOrNull { it.isLauncher }?.cls
+
         private const val NOTIFY_ID = 2001
         private const val NOTIFY_EXCEEDED_ID = 2002
 
@@ -196,7 +226,6 @@ class QuotaService : Service() {
                 if (over.isEmpty()) return
                 val timeQ = QuotaState.quotaPackages(AppStore.rules)
                 val cntQ = QuotaState.quotaCntPackages(AppStore.rules)
-                val usedCnt = QuotaState.usedCounts(ctx)
                 var changed = false
                 for (pkg in over.toList()) {
                     val tLimit = timeQ[pkg]
@@ -207,7 +236,9 @@ class QuotaService : Service() {
                         changed = true
                         continue
                     }
-                    val cOver = cLimit != null && (usedCnt[pkg] ?: 0) >= cLimit
+                    val cOver = cLimit != null && runCatching {
+                        UsageTracker.todayOpenCount(ctx, pkg, entryClsOf(pkg)) >= cLimit
+                    }.getOrDefault(true)
                     // 无使用时长权限时无法确认 → 保守视为仍超额（不解除），交给有权限时的下一轮
                     val tOver = tLimit != null && runCatching {
                         if (!UsageTracker.hasPermission(ctx)) true

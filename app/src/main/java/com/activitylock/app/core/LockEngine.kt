@@ -141,21 +141,9 @@ object LockEngine {
         AppStore.updateLocked(pkg, cls, false)
         AmsController.writeRules()
         AppStore.recordHistory(pkg, cls, "pm", "UNLOCK")
-        // ★ v1.30.0：每日解锁次数限额 —— 验证通过并真正放行才计 1 次
-        //   （点图标被拦、验证失败都不消耗额度）。达到上限即整包标记超额，
-        //   复用时长限额的拦截管道：点图标 → 额度提示页，次日 0 点恢复。
-        //   刚放行的当前会话不打断（不 force-stop），由自动锁闭链路照常收尾。
-        runCatching {
-            val ctx = AppStore.context()
-            val limit = QuotaState.quotaCntPackages(AppStore.rules)[pkg]
-            if (limit != null) {
-                val crossed = QuotaState.countUnlock(ctx, pkg, limit)
-                if (crossed && pkg !in QuotaState.overPackages(ctx)) {
-                    QuotaState.markOver(ctx, pkg)
-                    AmsController.writeRules()
-                }
-            }
-        }
+        // ★ v1.31.0：次数限额计数点迁移——旧「验证放行 +1」删除（覆盖不了跳转直达，
+        //   且工作台/场景/磁贴解锁都会误触发）。新口径 = UsageTracker.todayOpenCount
+        //   系统事件统计「入口界面 RESUMED」，由 QuotaService 巡检统一判定超额。
         // 通知自动锁闭记账：该界面已解锁，若开启「解锁后重新锁」则开始计时
         runCatching { AutoRelock.noteUnlocked(pkg, cls) }
         return LockOutcome(false, "pm", "已解锁（条目保留在收藏夹）")

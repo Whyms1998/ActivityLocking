@@ -181,7 +181,7 @@ object AppStore {
         rules = ruleStore.rules
     }
 
-    /** ★ v1.30.0：设置单条规则的每日解锁次数上限。cnt=null 表示不限次数。 */
+    /** ★ v1.30.0：设置单条规则的每日打开次数上限。cnt=null 表示不限次数。 */
     fun updateQuotaCnt(pkg: String, cls: String, cnt: Int?) {
         if (!::ruleStore.isInitialized) return
         ruleStore.updateQuotaCnt(pkg, cls, cnt)
