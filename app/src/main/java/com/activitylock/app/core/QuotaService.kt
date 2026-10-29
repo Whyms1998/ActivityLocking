@@ -93,6 +93,8 @@ class QuotaService : Service() {
             AppStore.ensureInit(this)
             if (!UsageTracker.hasPermission(this)) return
             if (QuotaState.resetIfNewDay(this)) AmsController.writeRules()
+            // ★ v1.30.2：自愈——限额被调大/取消后残留的超额状态在这里兜底解除
+            reevaluateOver(this)
 
             val quota = QuotaState.quotaPackages(AppStore.rules)
             val cntQuota = QuotaState.quotaCntPackages(AppStore.rules)
@@ -175,6 +177,48 @@ class QuotaService : Service() {
                 } else {
                     ctx.stopService(Intent(ctx, QuotaService::class.java))
                 }
+            }
+        }
+
+        /**
+         * ★ v1.30.2：重估超额集合。`over` 只在「触线瞬间」写入、次日惰性清空，
+         *   此前**调大限额 / 取消限额都不会解除**——测试时随手解锁几次把次数耗光后，
+         *   就算把限额改到 999 或留空，整包拦截仍然生效到当天结束（用户感知：
+         *   「明明没有超额但是也不让进去应用」）。这里对每个超额包重新判两个维度：
+         *   限额全撤 → 立即解除；两维度实测都不超 → 立即解除。任何配置变更
+         *   （编辑界面保存 / 配额页新增移除）后都应调用一次；服务巡检开头也调用，
+         *   兜住漏网路径。只在「解除」方向工作，不主动新增超额。
+         */
+        fun reevaluateOver(ctx: Context) {
+            runCatching {
+                AppStore.ensureInit(ctx)
+                val over = QuotaState.overPackages(ctx)
+                if (over.isEmpty()) return
+                val timeQ = QuotaState.quotaPackages(AppStore.rules)
+                val cntQ = QuotaState.quotaCntPackages(AppStore.rules)
+                val usedCnt = QuotaState.usedCounts(ctx)
+                var changed = false
+                for (pkg in over.toList()) {
+                    val tLimit = timeQ[pkg]
+                    val cLimit = cntQ[pkg]
+                    if (tLimit == null && cLimit == null) {
+                        // 限额已全部取消：超额状态必须跟着走，否则「删了限额还被拦」
+                        QuotaState.clearOver(ctx, pkg)
+                        changed = true
+                        continue
+                    }
+                    val cOver = cLimit != null && (usedCnt[pkg] ?: 0) >= cLimit
+                    // 无使用时长权限时无法确认 → 保守视为仍超额（不解除），交给有权限时的下一轮
+                    val tOver = tLimit != null && runCatching {
+                        if (!UsageTracker.hasPermission(ctx)) true
+                        else UsageTracker.todayMinutes(ctx, pkg) >= tLimit
+                    }.getOrDefault(true)
+                    if (!cOver && !tOver) {
+                        QuotaState.clearOver(ctx, pkg)
+                        changed = true
+                    }
+                }
+                if (changed) AmsController.writeRules()
             }
         }
     }

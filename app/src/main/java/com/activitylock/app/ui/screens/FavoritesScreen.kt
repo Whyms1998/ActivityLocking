@@ -101,6 +101,7 @@ import com.activitylock.app.core.LockOutcome
 import com.activitylock.app.core.LockRule
 import com.activitylock.app.core.FocusEngine
 import com.activitylock.app.core.FocusState
+import com.activitylock.app.core.QuotaState
 import com.activitylock.app.core.Scene
 import com.activitylock.app.core.SceneEngine
 import com.activitylock.app.core.UnlockExemptions
@@ -1219,266 +1220,11 @@ fun FavoritesScreen(
     }
 
     editing?.let { rule ->
-        var text by remember(rule) { mutableStateOf(rule.note) }
-        var redirect by remember(rule) { mutableStateOf(rule.redirectUri ?: "") }
-        /** 应用跳转开关：关 = 仅拦截（redirect 存空）；开 = 显示目标输入。 */
-        var redirectOn by remember(rule) { mutableStateOf(redirect.isNotBlank()) }
-        // ★ v1.24.9：每日限额改用统一的时长输入（分钟 / 小时）；0 = 不限
-        var quotaSec by remember(rule) { mutableStateOf((rule.quotaMin ?: 0) * 60) }
-        // ★ v1.30.0：每日解锁次数（留空 = 不限），与「每日限额」页完全同一套输入口径
-        var cntText by remember(rule) { mutableStateOf(rule.quotaCnt?.toString() ?: "") }
-        val cntVal = cntText.toIntOrNull()
-        val cntInvalid = cntText.isNotBlank() && (cntVal == null || cntVal !in 1..999)
-        // ---- 到点跳转（默认关；与时长限额同一套 UI）----
-        val sessionExisting = AppStore.sessionCfgs.firstOrNull { it.pkg == rule.packageName }
-        var sessionOn by remember(rule) { mutableStateOf(sessionExisting != null) }
-        var sessionTarget by remember(rule) { mutableStateOf(sessionExisting?.target ?: "") }
-        var sessionLimitSec by remember(rule) { mutableStateOf((sessionExisting?.limitMin ?: 5) * 60) }
-        val quotaOver = quotaSec / 60 > 1440
-        // ★「弹不出输入法」的直接修复：打开即把焦点放到备注框并**主动唤起键盘**。
-        val noteFocus = remember { androidx.compose.ui.focus.FocusRequester() }
-        val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
-        LaunchedEffect(rule) {
-            noteFocus.requestFocus()
-            keyboard?.show()
-        }
-        fun doSave() {
-            AppStore.updateNote(rule.packageName, rule.activityName, text)
-            // 0 / 不足 1 分钟 = 不限额（对应 null）
-            AppStore.updateQuota(
-                rule.packageName, rule.activityName,
-                if (quotaSec < 60) null else quotaSec / 60
-            )
-            // ★ v1.30.0：每日解锁次数（留空 = 不限），与时长同点保存
-            AppStore.updateQuotaCnt(rule.packageName, rule.activityName, cntVal?.takeIf { it in 1..999 })
-            // 到点跳转：开 = 保存配置（秒 → 分钟），关 = 清除
-            if (sessionOn) {
-                val t = sessionTarget.trim()
-                if (t.isNotEmpty()) {
-                    AppStore.upsertSession(
-                        com.activitylock.app.core.SessionCfg(
-                            pkg = rule.packageName, target = t,
-                            limitMin = (sessionLimitSec / 60).coerceAtLeast(1)
-                        )
-                    )
-                }
-            } else {
-                AppStore.removeSession(rule.packageName)
-            }
-            // 跳转目标/超额状态影响 Watcher 规则，立即同步；限额需要守护服务
-            com.activitylock.app.core.QuotaService.startIfQuotaConfigured(ctx)
-            editing = null
-            // ★ 走 LockEngine.saveRedirect：必要时把该条目切到「拦截模式 + 组件启用」，
-            //   否则给一条 pm 模式的条目补填跳转只会静默无效（详见 LockEngine 注释）。
-            scope.launch {
-                val o = LockEngine.saveRedirect(rule.packageName, rule.activityName, redirect)
-                if (o != null && !o.locked) AppStore.toast("跳转已保存，但启用拦截失败：${o.detail}")
-                refreshPmState()
-            }
-        }
-        AlertDialog(
-            onDismissRequest = { editing = null },
-            title = { Text("编辑界面") },
-            text = {
-                com.activitylock.app.ui.components.DialogImeResize()
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    Text(rule.activityName, style = MaterialTheme.typography.bodySmall)
-                    // ★ 跳转必须配在「桌面入口」上（2026-10-13 真机排查第二根因）：
-                    //   点桌面图标会先进入 launcher Activity；若那个界面也被锁、且没配跳转，
-                    //   请求在入口就被挡回桌面，更深界面上配的跳转**永远执行不到**。
-                    //   实测抖音：跳转填在 MainActivity，而图标入口是 SplashActivity，
-                    //   SplashActivity 恰好是空跳转的纯拦截 → 换多少个链接都不生效。
-                    val entryCls = runCatching {
-                        AppStore.findApp(rule.packageName)?.activities
-                            ?.firstOrNull { it.isLauncher }?.cls
-                    }.getOrNull()
-                    if (entryCls != null && entryCls != rule.activityName && redirect.isNotBlank()) {
-                        Spacer(Modifier.height(8.dp))
-                        Surface(
-                            color = MaterialTheme.colorScheme.tertiaryContainer,
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                "点桌面图标会先进入入口界面 ${entryCls.substringAfterLast('.')}；" +
-                                    "如果那个界面也被锁定、却没有配跳转，请求会当场被挡回桌面，" +
-                                    "这里的跳转就不会执行。想让「点图标直达」生效，请把跳转配在入口界面上。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                modifier = Modifier.padding(10.dp)
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = text,
-                        onValueChange = { text = it },
-                        label = { Text("备注") },
-                        placeholder = { Text("例如：小红书首页 / 抖音推荐流") },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .focusRequester(noteFocus)
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("应用跳转", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                        Switch(
-                            checked = redirectOn,
-                            onCheckedChange = { on ->
-                                redirectOn = on
-                                if (!on) redirect = ""
-                            }
-                        )
-                    }
-                    if (redirectOn) {
-                        OutlinedTextField(
-                            value = redirect,
-                            onValueChange = { redirect = it },
-                            label = { Text("跳转目标（拦截后跳到这里）") },
-                        // ★ v1.24.7：跳转是自由文本，不是数字范围输入，此处只声明不做钳制；
-                        //   真正需要范围的输入框一律用「原样保留 + isError + 常驻范围文案」口径。
-                            placeholder = { Text("深链 xhsdiscover://search 或界面类名") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    } else {
-                        Text(
-                            "仅拦截：界面被打开时直接挡回，不跳转",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    // ★ v1.24.9：与自动锁闭详情页同构 —— 每日限额统一走 [DurationField]。
-                    //   清空 = 0 = 不限额度；限额按分钟统计，所以单位只开放 分钟 / 小时，
-                    //   保证「填多少就存多少」，不做任何取整。
-                    Text("每日限额（留空不限）", style = MaterialTheme.typography.labelMedium)
-                    DurationField(
-                        seconds = quotaSec,
-                        onChange = { quotaSec = it },
-                        units = listOf(DurationUnit.MIN, DurationUnit.HOUR),
-                        equivalent = { sec ->
-                            when {
-                                sec <= 0 -> "不限额"
-                                sec / 60 > 1440 -> "超出上限：每天最多 24 小时"
-                                else -> "每天可用 " + relockDelayLabel(sec)
-                            }
-                        },
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        if (quotaOver) "超出上限：每天最多 24 小时（1440 分钟）"
-                        else "超额后当天拦截该 App，次日 0 点重置",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (quotaOver) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    // ★ v1.30.0：每日解锁次数 —— 与「每日限额」页（QuotaAddDialog）同款输入：
-                    //   只过滤非数字 + 限 3 位，不 coerceIn；越界只标红，点保存时拦截。
-                    OutlinedTextField(
-                        value = cntText,
-                        onValueChange = { cntText = it.filter { c -> c.isDigit() }.take(3) },
-                        label = { Text("每日解锁次数（留空不限）") },
-                        singleLine = true,
-                        isError = cntInvalid,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "按「验证通过并放行」计数；用满后当天拦截该 App",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (cntInvalid) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    // ★ 限额生效口径是「按包合并、同包取最大」：同一 App 的多个界面
-                    //   配置不一致时必须明说，否则这里显示的值和实际裁决不符（假开关红线）。
-                    run {
-                        val pkgRules = AppStore.rules.filter { it.packageName == rule.packageName }
-                        val timeVals = pkgRules.mapNotNull { it.quotaMin }
-                        val cntVals = pkgRules.mapNotNull { it.quotaCnt }
-                        val mergedDiff = (timeVals.size > 1 && timeVals.max() != rule.quotaMin) ||
-                            (cntVals.size > 1 && cntVals.max() != rule.quotaCnt)
-                        if (mergedDiff) {
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                "同一 App 的多个界面都配了限额时，生效值取最大",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    // ---- 到点跳转（默认关；开启后才能设置，与时长限额同一套 UI）----
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("到点跳转", style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                "打开本应用连续满 N 分钟，自动打开学习 App",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = sessionOn,
-                            onCheckedChange = { sessionOn = it }
-                        )
-                    }
-                    if (sessionOn) {
-                        Spacer(Modifier.height(6.dp))
-                        OutlinedTextField(
-                            value = sessionTarget,
-                            onValueChange = { sessionTarget = it },
-                            label = { Text("跳转目标（包名或深链）") },
-                            placeholder = { Text("如 com.tencent.weread 或深链") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        Text("连续使用（刷满即跳）", style = MaterialTheme.typography.labelMedium)
-                        DurationField(
-                            seconds = sessionLimitSec,
-                            onChange = { sessionLimitSec = it },
-                            units = listOf(DurationUnit.SEC, DurationUnit.MIN, DurationUnit.HOUR)
-                        )
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    androidx.compose.material3.OutlinedButton(
-                        onClick = { editingUnlock = rule },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            "解锁条件：" + requirementDesc(VerifyGate.requirementFor(ctx, rule)),
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    TextButton(onClick = {
-                        AppStore.upsertPreset(
-                            ConfigPreset(
-                                id = "",
-                                label = text.ifBlank { rule.activityName.substringAfterLast('.') },
-                                packageName = rule.packageName,
-                                activityName = rule.activityName,
-                                redirectUri = redirect.trim().takeIf { it.isNotBlank() },
-                                note = text.trim(),
-                                builtin = false,
-                            )
-                        )
-                        AppStore.toast("已保存到「我的方案」")
-                        editing = null
-                    }) { Text("存为预设（可在方案库复用/导出）") }
-                }
-            },
-            confirmButton = {
-                // 超出「一天」的限额没有意义（RuleStore 也会兜底），所以超限时禁用保存；
-                // 但用户在回显里能看到原因，不是"按钮莫名点不动"。
-                TextButton(enabled = !quotaOver && !cntInvalid, onClick = { doSave() }) { Text("保存") }
-            },
-            dismissButton = {
-                TextButton(onClick = { editing = null }) { Text("取消") }
-            }
+        RuleEditDialog(
+            rule = rule,
+            onDismiss = { editing = null },
+            onEditUnlock = { editingUnlock = it },
+            onRefreshPm = { refreshPmState() },
         )
     }
 
@@ -1629,6 +1375,302 @@ private fun SceneCard(s: Scene, busy: Boolean, onToggle: (Scene) -> Unit) {
  *   3. **界面行里的状态胶囊 + 「锁闭/解锁」按钮 + `⋮` 菜单 + 类名** ——
  *      全部收进「界面详情页」，行内只留「名称 + 开关」。
  */
+@Composable
+private fun RuleEditDialog(
+    rule: LockRule,
+    onDismiss: () -> Unit,
+    /** 打开解锁条件弹层（与工作台共用同一个 editingUnlock 状态）。 */
+    onEditUnlock: (LockRule) -> Unit,
+    /** 保存跳转后的父级刷新（pm 状态）。 */
+    onRefreshPm: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    var text by remember(rule) { mutableStateOf(rule.note) }
+    var redirect by remember(rule) { mutableStateOf(rule.redirectUri ?: "") }
+    /** 应用跳转开关：关 = 仅拦截（redirect 存空）；开 = 显示目标输入。 */
+    var redirectOn by remember(rule) { mutableStateOf(redirect.isNotBlank()) }
+    // ★ v1.24.9：每日限额改用统一的时长输入（分钟 / 小时）；0 = 不限
+    var quotaSec by remember(rule) { mutableStateOf((rule.quotaMin ?: 0) * 60) }
+    // ★ v1.30.0：每日解锁次数（留空 = 不限），与「每日限额」页完全同一套输入口径
+    var cntText by remember(rule) { mutableStateOf(rule.quotaCnt?.toString() ?: "") }
+    val cntVal = cntText.toIntOrNull()
+    val cntInvalid = cntText.isNotBlank() && (cntVal == null || cntVal !in 1..999)
+    // ---- 到点跳转（默认关；与时长限额同一套 UI）----
+    val sessionExisting = AppStore.sessionCfgs.firstOrNull { it.pkg == rule.packageName }
+    var sessionOn by remember(rule) { mutableStateOf(sessionExisting != null) }
+    var sessionTarget by remember(rule) { mutableStateOf(sessionExisting?.target ?: "") }
+    var sessionLimitSec by remember(rule) { mutableStateOf((sessionExisting?.limitMin ?: 5) * 60) }
+    val quotaOver = quotaSec / 60 > 1440
+    // ★「弹不出输入法」的直接修复：打开即把焦点放到备注框并**主动唤起键盘**。
+    val noteFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    LaunchedEffect(rule) {
+        noteFocus.requestFocus()
+        keyboard?.show()
+    }
+    fun doSave() {
+        AppStore.updateNote(rule.packageName, rule.activityName, text)
+        // 0 / 不足 1 分钟 = 不限额（对应 null）
+        AppStore.updateQuota(
+            rule.packageName, rule.activityName,
+            if (quotaSec < 60) null else quotaSec / 60
+        )
+        // ★ v1.30.0：每日解锁次数（留空 = 不限），与时长同点保存
+        AppStore.updateQuotaCnt(rule.packageName, rule.activityName, cntVal?.takeIf { it in 1..999 })
+        // 到点跳转：开 = 保存配置（秒 → 分钟），关 = 清除
+        if (sessionOn) {
+            val t = sessionTarget.trim()
+            if (t.isNotEmpty()) {
+                AppStore.upsertSession(
+                    com.activitylock.app.core.SessionCfg(
+                        pkg = rule.packageName, target = t,
+                        limitMin = (sessionLimitSec / 60).coerceAtLeast(1)
+                    )
+                )
+            }
+        } else {
+            AppStore.removeSession(rule.packageName)
+        }
+        // 跳转目标/超额状态影响 Watcher 规则，立即同步；限额需要守护服务
+        com.activitylock.app.core.QuotaService.startIfQuotaConfigured(ctx)
+        // ★ v1.30.2：限额刚被调大/取消，残留的超额状态立即重估解除（不等次日/巡检）
+        com.activitylock.app.core.QuotaService.reevaluateOver(ctx)
+        onDismiss()
+        // ★ 走 LockEngine.saveRedirect：必要时把该条目切到「拦截模式 + 组件启用」，
+        //   否则给一条 pm 模式的条目补填跳转只会静默无效（详见 LockEngine 注释）。
+        scope.launch {
+            val o = LockEngine.saveRedirect(rule.packageName, rule.activityName, redirect)
+            if (o != null && !o.locked) AppStore.toast("跳转已保存，但启用拦截失败：${o.detail}")
+            onRefreshPm()
+        }
+    }
+    AlertDialog(
+        onDismissRequest = { onDismiss() },
+        title = { Text("编辑界面") },
+        text = {
+            com.activitylock.app.ui.components.DialogImeResize()
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(rule.activityName, style = MaterialTheme.typography.bodySmall)
+                // ★ 跳转必须配在「桌面入口」上（2026-10-13 真机排查第二根因）：
+                //   点桌面图标会先进入 launcher Activity；若那个界面也被锁、且没配跳转，
+                //   请求在入口就被挡回桌面，更深界面上配的跳转**永远执行不到**。
+                //   实测抖音：跳转填在 MainActivity，而图标入口是 SplashActivity，
+                //   SplashActivity 恰好是空跳转的纯拦截 → 换多少个链接都不生效。
+                val entryCls = runCatching {
+                    AppStore.findApp(rule.packageName)?.activities
+                        ?.firstOrNull { it.isLauncher }?.cls
+                }.getOrNull()
+                if (entryCls != null && entryCls != rule.activityName && redirect.isNotBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.tertiaryContainer,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            "点桌面图标会先进入入口界面 ${entryCls.substringAfterLast('.')}；" +
+                                "如果那个界面也被锁定、却没有配跳转，请求会当场被挡回桌面，" +
+                                "这里的跳转就不会执行。想让「点图标直达」生效，请把跳转配在入口界面上。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("备注") },
+                    placeholder = { Text("例如：小红书首页 / 抖音推荐流") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(noteFocus)
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("应用跳转", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = redirectOn,
+                        onCheckedChange = { on ->
+                            redirectOn = on
+                            if (!on) redirect = ""
+                        }
+                    )
+                }
+                if (redirectOn) {
+                    OutlinedTextField(
+                        value = redirect,
+                        onValueChange = { redirect = it },
+                        label = { Text("跳转目标（拦截后跳到这里）") },
+                    // ★ v1.24.7：跳转是自由文本，不是数字范围输入，此处只声明不做钳制；
+                    //   真正需要范围的输入框一律用「原样保留 + isError + 常驻范围文案」口径。
+                        placeholder = { Text("深链 xhsdiscover://search 或界面类名") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    Text(
+                        "仅拦截：界面被打开时直接挡回，不跳转",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                // ★ v1.24.9：与自动锁闭详情页同构 —— 每日限额统一走 [DurationField]。
+                //   清空 = 0 = 不限额度；限额按分钟统计，所以单位只开放 分钟 / 小时，
+                //   保证「填多少就存多少」，不做任何取整。
+                Text("每日限额（留空不限）", style = MaterialTheme.typography.labelMedium)
+                DurationField(
+                    seconds = quotaSec,
+                    onChange = { quotaSec = it },
+                    units = listOf(DurationUnit.MIN, DurationUnit.HOUR),
+                    equivalent = { sec ->
+                        when {
+                            sec <= 0 -> "不限额"
+                            sec / 60 > 1440 -> "超出上限：每天最多 24 小时"
+                            else -> "每天可用 " + relockDelayLabel(sec)
+                        }
+                    },
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    if (quotaOver) "超出上限：每天最多 24 小时（1440 分钟）"
+                    else "超额后当天拦截该 App，次日 0 点重置",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (quotaOver) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(10.dp))
+                // ★ v1.30.0：每日解锁次数 —— 与「每日限额」页（QuotaAddDialog）同款输入：
+                //   只过滤非数字 + 限 3 位，不 coerceIn；越界只标红，点保存时拦截。
+                OutlinedTextField(
+                    value = cntText,
+                    onValueChange = { cntText = it.filter { c -> c.isDigit() }.take(3) },
+                    label = { Text("每日解锁次数（留空不限）") },
+                    singleLine = true,
+                    isError = cntInvalid,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "按「验证通过并放行」计数；用满后当天拦截该 App",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (cntInvalid) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                // ★ v1.30.2：把「已用多少 / 是否拦截中」直接摆出来——
+                //   此前超额状态完全不可见，用户改了限额也以为没生效。
+                val cntUsedNow = remember(rule) {
+                    QuotaState.usedCounts(ctx)[rule.packageName] ?: 0
+                }
+                val overNow = remember(rule) { rule.packageName in QuotaState.overPackages(ctx) }
+                if (overNow) {
+                    Text(
+                        "该 App 今日已超额（时长或次数任一触线），目前整包拦截中；" +
+                            "调大限额或留空并保存，立即解除",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
+                Text(
+                    "今日已解锁 $cntUsedNow 次",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                // ★ 限额生效口径是「按包合并、同包取最大」：同一 App 的多个界面
+                //   配置不一致时必须明说，否则这里显示的值和实际裁决不符（假开关红线）。
+                run {
+                val pkgRules = AppStore.rules.filter { it.packageName == rule.packageName }
+                val timeVals = pkgRules.mapNotNull { it.quotaMin }
+                    val cntVals = pkgRules.mapNotNull { it.quotaCnt }
+                    val mergedDiff = (timeVals.size > 1 && timeVals.max() != rule.quotaMin) ||
+                        (cntVals.size > 1 && cntVals.max() != rule.quotaCnt)
+                    if (mergedDiff) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "同一 App 的多个界面都配了限额时，生效值取最大",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                // ---- 到点跳转（默认关；开启后才能设置，与时长限额同一套 UI）----
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("到点跳转", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "打开本应用连续满 N 分钟，自动打开学习 App",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = sessionOn,
+                        onCheckedChange = { sessionOn = it }
+                    )
+                }
+                if (sessionOn) {
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = sessionTarget,
+                        onValueChange = { sessionTarget = it },
+                        label = { Text("跳转目标（包名或深链）") },
+                        placeholder = { Text("如 com.tencent.weread 或深链") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text("连续使用（刷满即跳）", style = MaterialTheme.typography.labelMedium)
+                    DurationField(
+                        seconds = sessionLimitSec,
+                        onChange = { sessionLimitSec = it },
+                        units = listOf(DurationUnit.SEC, DurationUnit.MIN, DurationUnit.HOUR)
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                androidx.compose.material3.OutlinedButton(
+                    onClick = { onEditUnlock(rule) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        "解锁条件：" + requirementDesc(VerifyGate.requirementFor(ctx, rule)),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = {
+                    AppStore.upsertPreset(
+                        ConfigPreset(
+                            id = "",
+                            label = text.ifBlank { rule.activityName.substringAfterLast('.') },
+                            packageName = rule.packageName,
+                            activityName = rule.activityName,
+                            redirectUri = redirect.trim().takeIf { it.isNotBlank() },
+                            note = text.trim(),
+                            builtin = false,
+                        )
+                    )
+                    AppStore.toast("已保存到「我的方案」")
+                    onDismiss()
+                }) { Text("存为预设（可在方案库复用/导出）") }
+            }
+        },
+        confirmButton = {
+            // 超出「一天」的限额没有意义（RuleStore 也会兜底），所以超限时禁用保存；
+            // 但用户在回显里能看到原因，不是"按钮莫名点不动"。
+            TextButton(enabled = !quotaOver && !cntInvalid, onClick = { doSave() }) { Text("保存") }
+        },
+        dismissButton = {
+            TextButton(onClick = { onDismiss() }) { Text("取消") }
+        }
+    )
+}
+
 @Composable
 private fun GridDetailDialog(
     pkg: String,

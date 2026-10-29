@@ -62,6 +62,9 @@ import com.activitylock.app.ui.components.DurationUnit
 import com.activitylock.app.ui.components.UnlockVerifyDialog
 
 private fun refresh(ctx: android.content.Context) {
+    // ★ v1.30.2：限额变更（新增/移除）后先重估残留超额，再同步规则与服务——
+    //   顺序很重要：先解除 over 再 writeRules，避免把刚解除的包又写回拦截清单。
+    com.activitylock.app.core.QuotaService.reevaluateOver(ctx)
     com.activitylock.app.core.AmsController.writeRules()
     QuotaService.startIfQuotaConfigured(ctx)
 }
