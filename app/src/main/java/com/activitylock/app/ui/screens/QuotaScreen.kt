@@ -478,22 +478,22 @@ private fun TaskEditSheet(
                         Text("禁止使用", style = MaterialTheme.typography.bodyLarge)
                     }
                     DurationRuleRow(
-                        title = "当前时间段，累计",
+                        title = "当前时间段时长",
                         sec = rules.windowLimitSec,
                         onChange = { rules = rules.copy(windowLimitSec = it) },
                     )
                     CountRuleRow(
-                        title = "当前时间段，使用",
+                        title = "当前时间段次数",
                         value = rules.windowLimitCnt,
                         onChange = { rules = rules.copy(windowLimitCnt = it) },
                     )
                     DurationRuleRow(
-                        title = "当天，累计",
+                        title = "当天时长",
                         sec = rules.dayLimitSec,
                         onChange = { rules = rules.copy(dayLimitSec = it) },
                     )
                     CountRuleRow(
-                        title = "当天，使用",
+                        title = "当天次数",
                         value = rules.dayLimitCnt,
                         onChange = { rules = rules.copy(dayLimitCnt = it) },
                     )
