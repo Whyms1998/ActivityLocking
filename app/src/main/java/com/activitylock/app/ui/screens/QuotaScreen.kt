@@ -130,9 +130,7 @@ fun QuotaScreen(onBack: () -> Unit) {
                 }
             } else {
                 Text(
-                    "屏幕亮着时每分钟统计一次；超额后点图标会看到额度提示页，次日 0 点重置。\n" +
-                        "每日打开次数：每次打开该 App 计 1 次（含跳转直达、验证解锁），用满同样整包拦到额度页。\n" +
-                        "手动解锁（通过该界面的解锁条件验证）优先于限额。",
+                    "亮屏每分钟统计一次；超额后当天拦截，次日 0 点重置。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
@@ -143,16 +141,7 @@ fun QuotaScreen(onBack: () -> Unit) {
             Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp)) {
                 Column(Modifier.padding(12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("到点跳转", style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                "打开触发 App 连续满 N 分钟，自动打开学习 App。\n" +
-                                    "切去其他 App 在宽限时间内回来会接着算（回消息不受影响），超过才重新计时；" +
-                                    "宽限时间在新增规则时自定义（精确到秒）。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                        Text("到点跳转", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                         TextButton(onClick = { addingSession = true }) { Text("＋ 新增") }
                     }
                     AppStore.sessionCfgs.forEach { c ->
@@ -213,7 +202,7 @@ fun QuotaScreen(onBack: () -> Unit) {
                     Text("还没有限额", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "点右上角「＋」为已锁定规则的 App 设置每日上限：可用时长（例如抖音每天 20 分钟）、打开次数，或两者都限。",
+                        "点右上角「＋」为 App 设置每日可用时长或打开次数上限",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -379,7 +368,7 @@ private fun QuotaAddDialog(
         title = { Text("添加限额") },
         text = {
             // ★ 分钟数输入框会唤起键盘 → 让 Dialog window 随键盘收缩
-            com.activitylock.app.ui.components.DialogImeResize()
+            com.activitylock.app.ui.components.DialogImePan()
             Column {
                 if (candidates.isEmpty()) {
                     Text("所有已锁规则的 App 都已配置限额。")
@@ -405,15 +394,14 @@ private fun QuotaAddDialog(
                     },
                 )
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    // ★ 「每日」限额的天然上限就是一天 —— 这是定义边界而不是随手限幅，
-                    //   因此保留但**明说**，不再静默钳制。
-                    if (overDay) "超出上限：每天最多 24 小时（1440 分钟）"
-                    else "超额后当天拦截该 App，次日 0 点重置",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (overDay) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                if (overDay) {
+                    Text(
+                        // ★ 「每日」限额的天然上限就是一天 —— 定义边界明说，不静默钳制
+                        "超出上限：每天最多 24 小时（1440 分钟）",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
                 Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     value = cntText,
@@ -426,13 +414,6 @@ private fun QuotaAddDialog(
                     singleLine = true,
                     isError = cntInvalid,
                     modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "每次打开该 App 计 1 次（含跳转直达）；用满后当天拦截",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (cntInvalid) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         },
@@ -494,7 +475,7 @@ private fun SessionAddDialog(
         title = { Text("新增到点跳转") },
         text = {
             // ★ 目标包名等输入框会唤起键盘 → 让 Dialog window 随键盘收缩
-            com.activitylock.app.ui.components.DialogImeResize()
+            com.activitylock.app.ui.components.DialogImePan()
             // 内容整体可滚动（PickerList 内部自带滚动，超出屏幕的部分靠这里拖动）
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text("刷满后怎么处理", style = MaterialTheme.typography.labelMedium)
@@ -623,7 +604,7 @@ private fun SessionAddDialog(
             title = { Text("自定义锁定次数") },
             text = {
                 // ★ 次数输入框会唤起键盘 → 让 Dialog window 随键盘收缩
-                com.activitylock.app.ui.components.DialogImeResize()
+                com.activitylock.app.ui.components.DialogImePan()
                 Column {
                     Text(
                         "当日第 N 次跳转后锁定该 App",

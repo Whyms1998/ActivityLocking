@@ -370,7 +370,8 @@ private fun PresetEditorDialog(
         title = { Text(if (initial == null) "新建方案" else "编辑方案") },
         text = {
             // ★ 名称/包名/界面等多个输入框 → 让 Dialog window 随键盘收缩
-            com.activitylock.app.ui.components.DialogImeResize()
+            // ★ v1.31.1：居中弹窗改 ADJUST_PAN（resize 随键盘收缩会反复重新居中 → 跳动）
+            com.activitylock.app.ui.components.DialogImePan()
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = label, onValueChange = { label = it },

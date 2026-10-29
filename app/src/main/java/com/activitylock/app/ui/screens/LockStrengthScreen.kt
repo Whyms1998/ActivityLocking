@@ -78,12 +78,6 @@ fun LockStrengthScreen(onBack: () -> Unit) {
                     Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("计划生效期间禁用特赦", style = MaterialTheme.typography.titleSmall)
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                "睡眠模式等计划生效期间，特赦一并失效——半夜不给开口子",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
                             if (planActive) {
                                 Spacer(Modifier.height(4.dp))
                                 Text(

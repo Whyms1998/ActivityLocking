@@ -92,8 +92,7 @@ fun AutoRelockScreen(
         ) {
             Card(Modifier.fillMaxWidth()) {
                 Text(
-                    "解锁过的界面，到点自动锁回——防止\"用完忘了锁\"。\n" +
-                        "作用范围 = 收藏夹里全部条目（解锁哪个，重锁哪个）。",
+                    "解锁过的界面，到点自动锁回",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(12.dp)
@@ -139,7 +138,6 @@ fun AutoRelockScreen(
 
             SceneRowCard(
                 title = "解锁后",
-                desc = "通过验证解锁后开始计时，到点锁回",
                 link = AutoRelockStore.LINK_UNLOCK,
                 delaySec = AutoRelock.globalDelaySec,
                 onToggle = { want ->
@@ -152,7 +150,6 @@ fun AutoRelockScreen(
             Spacer(Modifier.height(10.dp))
             SceneRowCard(
                 title = "退出后",
-                desc = "应用切到后台开始计时，到点锁回",
                 link = AutoRelockStore.LINK_EXIT,
                 delaySec = AutoRelock.globalExitDelaySec,
                 onToggle = { want ->
@@ -165,7 +162,6 @@ fun AutoRelockScreen(
             Spacer(Modifier.height(10.dp))
             SceneRowCard(
                 title = "锁屏后",
-                desc = "息屏立即或延迟后锁回（锁屏期间仍熄屏才执行）",
                 link = AutoRelockStore.LINK_SCREEN_OFF,
                 delaySec = AutoRelock.globalScreenOffDelaySec,
                 onToggle = { want ->
@@ -178,8 +174,7 @@ fun AutoRelockScreen(
 
             Spacer(Modifier.height(16.dp))
             Text(
-                "延迟只在开关打开时生效；0 秒 = 立即。\n" +
-                    "关闭开关或调大延迟属于削弱性修改，需要先通过解锁验证。",
+                "0 秒 = 立即；关闭开关或调大延迟需先通过验证",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -263,7 +258,7 @@ fun AutoRelockScreen(
 @Composable
 private fun SceneRowCard(
     title: String,
-    desc: String,
+    desc: String? = null,
     link: Int,
     delaySec: Int,
     onToggle: (Boolean) -> Unit,
@@ -278,12 +273,14 @@ private fun SceneRowCard(
         ) {
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.titleSmall)
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    desc,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                if (desc != null) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        desc,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
             TextButton(onClick = onEditDelay) {
                 Text(

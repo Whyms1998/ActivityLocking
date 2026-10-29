@@ -924,7 +924,7 @@ fun FavoritesScreen(
             text = {
                 Column {
                     Text(
-                        "本界面的重锁时机与延迟；界面级设置优先于全局。打开开关时若全局总闸未开会自动同步打开。",
+                        "界面级设置优先于全局",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -983,13 +983,6 @@ fun FavoritesScreen(
                                 }
                             ),
                         )
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "点时间可改（跟随全局 / 自定义秒分时）；开关关闭 = 该界面此时机不自动重锁。" +
-                            "调大延迟或关闭开关属于削弱，需先通过验证。",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             },
@@ -1470,7 +1463,9 @@ private fun RuleEditDialog(
         onDismissRequest = { onDismiss() },
         title = { Text("编辑界面") },
         text = {
-            com.activitylock.app.ui.components.DialogImeResize()
+            // ★ v1.31.1：居中弹窗改 ADJUST_PAN——resize 会让窗口随键盘收缩后重新居中，
+            //   中文输入法键盘高度一变弹窗就上下跳（酷安编辑弹窗实测）；PAN 窗口不动。
+            com.activitylock.app.ui.components.DialogImePan()
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text(rule.activityName, style = MaterialTheme.typography.bodySmall)
                 // ★ 跳转必须配在「桌面入口」上（2026-10-13 真机排查第二根因）：
@@ -1484,20 +1479,11 @@ private fun RuleEditDialog(
                 }.getOrNull()
                 if (entryCls != null && entryCls != rule.activityName && redirect.isNotBlank()) {
                     Spacer(Modifier.height(8.dp))
-                    Surface(
-                        color = MaterialTheme.colorScheme.tertiaryContainer,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            "点桌面图标会先进入入口界面 ${entryCls.substringAfterLast('.')}；" +
-                                "如果那个界面也被锁定、却没有配跳转，请求会当场被挡回桌面，" +
-                                "这里的跳转就不会执行。想让「点图标直达」生效，请把跳转配在入口界面上。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onTertiaryContainer,
-                            modifier = Modifier.padding(10.dp)
-                        )
-                    }
+                    Text(
+                        "想让点桌面图标直达生效，请把跳转配在入口界面 ${entryCls.substringAfterLast('.')} 上",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
@@ -1532,12 +1518,6 @@ private fun RuleEditDialog(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                } else {
-                    Text(
-                        "仅拦截：界面被打开时直接挡回，不跳转",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
                 Spacer(Modifier.height(8.dp))
                 // ★ v1.24.9：与自动锁闭详情页同构 —— 每日限额统一走 [DurationField]。
@@ -1557,14 +1537,15 @@ private fun RuleEditDialog(
                     },
                 )
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    if (quotaOver) "超出上限：每天最多 24 小时（1440 分钟）"
-                    else "超额后当天拦截该 App，次日 0 点重置",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (quotaOver) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(10.dp))
+                if (quotaOver) {
+                    Text(
+                        "超出上限：每天最多 24 小时（1440 分钟）",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(Modifier.height(4.dp))
+                }
+                Spacer(Modifier.height(8.dp))
                 // ★ v1.31.0：每日打开次数 —— 数字专用键盘（无候选栏，修「输入数字时
                 //   上下滑动闪屏」：中文输入法的 composing 预编辑会反复触发布局/窗口
                 //   高度变化）；只过滤非数字 + 限 3 位，不 coerceIn；越界只标红，点保存时拦截。
@@ -1580,24 +1561,17 @@ private fun RuleEditDialog(
                     ),
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "每次打开该 App 计 1 次（含跳转直达）；用满后当天拦截",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (cntInvalid) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurfaceVariant
-                )
                 // ★ v1.30.2：把「已用多少 / 是否拦截中」直接摆出来——
                 //   此前超额状态完全不可见，用户改了限额也以为没生效。
                 if (overNow) {
+                    Spacer(Modifier.height(4.dp))
                     Text(
-                        "该 App 今日已超额（时长或打开次数任一触线），目前整包拦截中；" +
-                            "调整限额需要先通过验证",
+                        "今日已超额，整包拦截中；调整限额需先通过验证",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error
                     )
-                    Spacer(Modifier.height(4.dp))
                 }
+                Spacer(Modifier.height(4.dp))
                 Text(
                     "今日已打开 $cntUsedNow 次",
                     style = MaterialTheme.typography.labelSmall,
@@ -1623,14 +1597,7 @@ private fun RuleEditDialog(
                 Spacer(Modifier.height(12.dp))
                 // ---- 到点跳转（默认关；开启后才能设置，与时长限额同一套 UI）----
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("到点跳转", style = MaterialTheme.typography.titleSmall)
-                        Text(
-                            "打开本应用连续满 N 分钟，自动打开学习 App",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    Text("到点跳转", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                     Switch(
                         checked = sessionOn,
                         onCheckedChange = { sessionOn = it }
@@ -1679,7 +1646,7 @@ private fun RuleEditDialog(
                     )
                     AppStore.toast("已保存到「我的方案」")
                     onDismiss()
-                }) { Text("存为预设（可在方案库复用/导出）") }
+                }) { Text("存为预设") }
             }
         },
         confirmButton = {

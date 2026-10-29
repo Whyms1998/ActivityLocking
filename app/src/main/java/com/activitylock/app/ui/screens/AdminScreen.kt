@@ -72,9 +72,8 @@ fun AdminScreen(onBack: () -> Unit) {
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "激活设备管理员后，「应用锁」无法被直接卸载或清除数据——" +
-                            "必须先在系统设置中停用本保护（停用时会收到明确警告）。\n" +
-                            "这是防止「卸载了事」的关键开关。",
+                        "激活后「应用锁」无法被直接卸载或清除数据；" +
+                            "需先在系统设置中停用本保护（停用会收到警告）",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

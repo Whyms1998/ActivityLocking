@@ -92,8 +92,9 @@ fun UnlockConditionDialog(
         onDismissRequest = onDismiss,
         title = { Text("解锁条件") },
         text = {
-            // ★ 条件编辑器含密码/口算题数量等输入框，键盘会盖住底部按钮 → 窗口随键盘收缩
-            DialogImeResize()
+            // ★ 条件编辑器含密码/口算题数量等输入框。v1.31.1：居中弹窗改 ADJUST_PAN ——
+            //   resize 会让窗口随键盘收缩后重新居中，键盘高度一变就上下跳；PAN 窗口不动。
+            com.activitylock.app.ui.components.DialogImePan()
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text(
                     rule.note.ifBlank { rule.activityName.substringAfterLast('.') },

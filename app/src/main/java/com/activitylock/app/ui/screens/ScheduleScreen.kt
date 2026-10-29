@@ -84,7 +84,7 @@ fun ScheduleScreen(onBack: () -> Unit) {
                         Column(Modifier.weight(1f)) {
                             Text("息屏自动清栈", style = MaterialTheme.typography.titleSmall)
                             Text(
-                                "息屏时结束所有锁定中的 App，封死「恢复任务」绕过路径",
+                                "息屏时结束所有锁定中的 App",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -249,7 +249,7 @@ private fun ScheduleEditorDialog(
         title = { Text(if (initial == null) "新建计划" else "编辑计划") },
         text = {
             // ★ 名称输入框会唤起键盘 → 让 Dialog window 随键盘收缩
-            com.activitylock.app.ui.components.DialogImeResize()
+            com.activitylock.app.ui.components.DialogImePan()
             Column {
                 OutlinedTextField(
                     value = label,

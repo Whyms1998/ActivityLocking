@@ -212,7 +212,7 @@ private fun SceneEditorDialog(
         title = { Text(if (initial == null) "新建场景" else "编辑场景") },
         text = {
             // ★ 名称输入框会唤起键盘 → 让 Dialog window 随键盘收缩
-            com.activitylock.app.ui.components.DialogImeResize()
+            com.activitylock.app.ui.components.DialogImePan()
             Column {
                 OutlinedTextField(
                     value = label,

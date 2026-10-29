@@ -238,7 +238,7 @@ fun FocusScreen(onBack: () -> Unit) {
                         Text("严格模式", style = MaterialTheme.typography.bodyMedium)
                         Text(
                             if (com.activitylock.app.core.SelfCode.hasCode(ctx)) "已绑定自律码：关闭需输入"
-                            else "提前结束需通过验证；开启将生成自律码（关闭时需输入）",
+                            else "开启将生成自律码，关闭需输入",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

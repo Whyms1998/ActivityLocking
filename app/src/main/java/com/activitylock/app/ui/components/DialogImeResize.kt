@@ -31,6 +31,12 @@ import androidx.compose.ui.window.DialogWindowProvider
  * 注意：`DialogProperties.decorFitsSystemWindows` 必须保持 **true** ——
  *   Android 11+ 对 `false` 的 window 会忽略 adjustResize，
  *   且 Compose Dialog 在 `false` 时还有"输入法不弹出"的已知问题。
+ *
+ * ★ v1.31.1：必须**幂等**——`SideEffect` 在每次重组后都会跑，而输入数字时弹窗内容
+ *   （状态文本）必然重组；`setSoftInputMode` 每次调用都会走
+ *   `dispatchWindowAttributesChanged → ViewRootImpl.requestLayout`，键盘弹出期间
+ *   每敲一键就强制重排一次窗口 → 表现为弹窗随键盘**上下不停跳动**（真机复现）。
+ *   对策：先读 `attributes.softInputMode` 比对，值没变就不设置。
  */
 @Composable
 fun DialogImeResize() {
@@ -40,9 +46,37 @@ fun DialogImeResize() {
         if (window == null) {
             Log.w(TAG, "DialogImeResize: 未找到 DialogWindow —— 调用点必须在 Dialog 内容里！" +
                 " view=${view.javaClass.simpleName} parent=${view.parent?.javaClass?.name}")
-        } else {
+        } else if (window.attributes.softInputMode != WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE) {
             window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
             Log.i(TAG, "DialogImeResize: softInputMode -> ${window.attributes.softInputMode}")
+        }
+    }
+}
+
+/**
+ * 让**当前居中 Dialog** 在键盘弹出时**保持完全静止**（SOFT_INPUT_ADJUST_PAN）。
+ *
+ * ★ 为什么不用 ADJUST_RESIZE（v1.31.1 真机结论）：居中弹窗是 wrap 高度、由系统居中摆放，
+ *   resize 会让窗口随键盘收缩后**重新居中**——中文输入法切换数字键盘 / 工具栏伸缩时
+ *   键盘高度反复变化，弹窗就跟着**上下不停跳**（酷安编辑弹窗实测）。
+ *   PAN 模式下窗口永不收缩，只有焦点框被键盘盖住时才整体平移一次，视觉稳定。
+ *
+ * ★ 适用范围：内容可滚动、高度较大的**居中**编辑弹窗（编辑界面 / 添加限额 / 解锁条件）。
+ *   全屏验证页（UnlockVerifyDialog）仍用 DialogImeResize —— 那里必须让「确认解锁」
+ *   按钮保持在键盘上方，resize 是正解。
+ *
+ * ★ 同样必须调用在 Dialog 内容 lambda 内部，且必须幂等（理由见 DialogImeResize）。
+ */
+@Composable
+fun DialogImePan() {
+    val view = LocalView.current
+    SideEffect {
+        val window = resolveDialogWindow(view)
+        if (window == null) {
+            Log.w(TAG, "DialogImePan: 未找到 DialogWindow —— 调用点必须在 Dialog 内容里！")
+        } else if (window.attributes.softInputMode != WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN) {
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN)
+            Log.i(TAG, "DialogImePan: softInputMode -> ${window.attributes.softInputMode}")
         }
     }
 }
@@ -78,11 +112,17 @@ fun DialogBottomSheet() {
         val window = resolveDialogWindow(view)
         if (window == null) {
             Log.w(TAG, "DialogBottomSheet: 未找到 DialogWindow —— 调用点必须在 Dialog 内容里！")
-        } else {
-            window.setGravity(Gravity.BOTTOM)
-            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-            Log.i(TAG, "DialogBottomSheet: gravity=BOTTOM softInputMode=${window.attributes.softInputMode}")
+            return@SideEffect
         }
+        // 与 DialogImeResize 同理：属性没变就不写，避免每次重组强制重排（键盘期跳动）
+        val a = window.attributes
+        if (a.softInputMode != WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE) {
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        }
+        if (a.gravity != Gravity.BOTTOM) {
+            window.setGravity(Gravity.BOTTOM)
+        }
+        Log.i(TAG, "DialogBottomSheet: gravity=BOTTOM softInputMode=${window.attributes.softInputMode}")
     }
 }
 

@@ -342,7 +342,8 @@ private fun LockLauncherDialog(
         title = { Text(if (isLauncher) "锁定桌面入口" else "锁定该界面") },
         text = {
             // ★ 跳转目标输入框会唤起键盘 → 让 Dialog window 随键盘收缩，底部按钮不被遮挡
-            com.activitylock.app.ui.components.DialogImeResize()
+            // ★ v1.31.1：居中弹窗改 ADJUST_PAN（resize 随键盘收缩会反复重新居中 → 跳动）
+            com.activitylock.app.ui.components.DialogImePan()
             Column(
                 Modifier.verticalScroll(rememberScrollState())
             ) {
