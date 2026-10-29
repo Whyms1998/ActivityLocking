@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
@@ -28,6 +29,15 @@ class QuotaService : Service() {
     private var screenOn = true
     @Volatile
     private var running = false
+
+    // ★ v1.31.2：次数维度走「3 秒增量快检」——缓存当日累计次数，按增量窗口累加。
+    //   只在 quota 线程访问，无需加锁；跨天 / 服务重启时用全天统计重新播种。
+    private val cntCache = HashMap<String, Int>()
+    private var cntDay: String = ""
+    private var cntSeenUntil: Long = 0L
+
+    /** 超限包的上次 force-stop 时间：快循环 3 秒一轮，必须节流，否则每隔几秒拉一次 shell。 */
+    private val lastKillAt = HashMap<String, Long>()
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -67,8 +77,15 @@ class QuotaService : Service() {
         }
         running = true
         // scheduleWithFixedDelay：上次跑完才排下次，不会堆积任务
+        // 慢循环（60s）：时长维度全量统计（UsageStats 全天遍历较重）
         exec.scheduleWithFixedDelay(
             { if (running) runCatching { tick() } }, 0L, 60_000L, TimeUnit.MILLISECONDS
+        )
+        // ★ v1.31.2 快循环（3s）：次数维度增量检查——次数是「打开即计」的事件，
+        //   挂 60s 巡检会让「连开七八次」全部落在未判定的窗口里（真机复现：
+        //   设 6 次、实际开到 7 次都没触发拦截），必须秒级判定才谈得上生效。
+        exec.scheduleWithFixedDelay(
+            { if (running) runCatching { tickCount() } }, 1_000L, 3_000L, TimeUnit.MILLISECONDS
         )
     }
 
@@ -117,25 +134,95 @@ class QuotaService : Service() {
                     ShizukuManager.run("am", "force-stop", pkg)
                 }
             }
-            // ★ v1.31.0：次数维度改「打开次数」——系统事件统计（ UsageTracker.todayOpenCount），
-            //   无论验证解锁、跳转直达还是通知点开，打开即计 1 次（60s 粒度）。
-            //   旧口径「验证放行才计数」覆盖不了跳转直达的包（点图标进搜索页不经验证，永远不计）。
-            for ((pkg, limit) in cntQuota) {
-                if (pkg in over) continue
-                val opens = UsageTracker.todayOpenCount(this, pkg, entryClsOf(pkg))
-                if (opens >= limit) {
-                    QuotaState.markOver(this, pkg)
-                    crossedNow = true
-                    notifyCntExceeded(pkg, opens, limit)
-                    ShizukuManager.run("am", "force-stop", pkg)
-                }
-            }
+            // ★ v1.31.2：次数维度改由 3 秒快循环（tickCount）判定，这里不再重复处理，
+            //   避免两处各自 force-stop / 发通知。
             if (crossedNow) AmsController.writeRules()
+            // 诊断：每分钟把次数缓存读数打一次（排查「限额没生效」时看这里，
+            // 缓存值应与限额页「今日已打开 X/Y」一致）
+            if (cntCache.isNotEmpty()) {
+                Log.i(TAG, "cntCache=" + cntCache.entries.joinToString { (k, v) ->
+                    "${k.substringAfterLast('.')}:$v/${cntQuota[k] ?: "-"}"
+                })
+            }
             // 已超额的包（含升级前标记的）持续补写包级拦截条目
             if (QuotaState.overPackages(this).isNotEmpty()) AmsController.writeRules()
             updateNotification(summary.toString().trim())
         }
     }
+
+    /**
+     * ★ v1.31.2：次数维度快检（3 秒一次，增量事件窗口）。
+     *
+     * 语义（与限额页文案一致）：
+     *  - 第 N 次打开**本身可用**（打开即计 1 次，达到上限只标超额、不打断当前会话）；
+     *  - 第 N+1 次起：判定超额 → 包级拦截写进 blocked.json（下次新启动直接被拦到额度页），
+     *    并对仍在跑的这个包 `am force-stop`——因为「回前台 / 点图标恢复任务」不会产生
+     *    新的 activity 启动，系统不给我们拦截回调，只有杀掉进程才能让下一次是全新启动。
+     */
+    private fun tickCount() {
+        if (!screenOn) return
+        runCatching {
+            AppStore.ensureInit(this)
+            val cntQuota = QuotaState.quotaCntPackages(AppStore.rules)
+            if (cntQuota.isEmpty()) {
+                cntCache.clear(); cntDay = ""; cntSeenUntil = 0L
+                return@runCatching
+            }
+            if (!UsageTracker.hasPermission(this)) return@runCatching
+            if (QuotaState.resetIfNewDay(this)) {
+                AmsController.writeRules()
+                cntCache.clear(); cntDay = ""; cntSeenUntil = 0L
+            }
+            val day = todayStr()
+            if (day != cntDay) {
+                cntCache.clear(); cntSeenUntil = 0L; cntDay = day
+            }
+            for (pkg in cntQuota.keys) {
+                val entry = entryClsOf(pkg)
+                val known = cntCache[pkg]
+                when {
+                    // 没有入口界面锚点 → 增量无法判会话边界，直接全天重算（包数少，可接受）
+                    entry == null -> cntCache[pkg] = UsageTracker.todayOpenCount(this, pkg, null)
+                    // 首次播种 / 新配置的包：全天统计一次作为基数
+                    known == null || cntSeenUntil == 0L ->
+                        cntCache[pkg] = UsageTracker.todayOpenCount(this, pkg, entry)
+                    else -> {
+                        val add = UsageTracker.countSince(this, pkg, entry, cntSeenUntil)
+                        if (add > 0) {
+                            cntCache[pkg] = known + add
+                            Log.i(TAG, "count $pkg +$add -> ${known + add}")
+                        }
+                    }
+                }
+            }
+            cntSeenUntil = System.currentTimeMillis()
+            var dirty = false
+            val over = QuotaState.overPackages(this)
+            for ((pkg, limit) in cntQuota) {
+                val opens = cntCache[pkg] ?: continue
+                if (pkg !in over && opens >= limit) {
+                    QuotaState.markOver(this, pkg)
+                    notifyCntExceeded(pkg, opens, limit)
+                    dirty = true
+                    Log.i(TAG, "count over: $pkg $opens/$limit")
+                }
+                // 超过上限（第 N+1 次起）→ 结束当前会话，堵住「回前台不算新启动」的绕过。
+                // 15 秒节流：本循环 3 秒一轮，不节流会每隔几秒拉起一次 shell 进程。
+                if (opens > limit) {
+                    val last = lastKillAt[pkg] ?: 0L
+                    val now = System.currentTimeMillis()
+                    if (now - last >= 15_000L) {
+                        lastKillAt[pkg] = now
+                        ShizukuManager.run("am", "force-stop", pkg)
+                    }
+                }
+            }
+            if (dirty) AmsController.writeRules()
+        }
+    }
+
+    private fun todayStr(): String =
+        java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
 
     private fun ensureChannel() {
         val nm = getSystemService(NotificationManager::class.java)
@@ -188,6 +275,7 @@ class QuotaService : Service() {
     }
 
     companion object {
+        private const val TAG = "QuotaSvc"
         private const val CHANNEL_ID = "quota_watch"
 
         /** 该包的桌面入口类名（「打开次数」的计数锚点；扫不到为 null 时退化为前台会话数）。 */

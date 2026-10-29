@@ -84,6 +84,32 @@ object UsageTracker {
      * （PAUSED/STOPPED）之后的第一个 RESUMED 计 1 次——宁多勿漏。
      * 系统事件是权威数据源：无论走验证解锁、跳转直达还是通知点开，都算打开。
      */
+    /**
+     * ★ v1.31.2：只统计 [sinceMs, now] 区间内「入口界面 RESUMED」的次数（增量快检）。
+     *
+     * 为什么需要：次数限额原先挂在 60 秒巡检上，达标到真正落锁最多要等一分钟——
+     * 连续点开七八次都在窗口里，用户看到的就是「限额没生效」。
+     * 快循环（3 秒）用增量窗口查询，只扫这几秒的事件，代价极低。
+     *
+     * entryCls 为空时不适用增量（无法判断会话边界），调用方应回退 [todayOpenCount]。
+     */
+    fun countSince(ctx: Context, pkg: String, entryCls: String, sinceMs: Long): Int {
+        val usm = ctx.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        var count = 0
+        runCatching {
+            val events = usm.queryEvents(sinceMs, System.currentTimeMillis())
+            val e = UsageEvents.Event()
+            while (events.hasNextEvent()) {
+                events.getNextEvent(e)
+                if (e.packageName == pkg &&
+                    e.eventType == UsageEvents.Event.ACTIVITY_RESUMED &&
+                    e.className == entryCls
+                ) count++
+            }
+        }
+        return count
+    }
+
     fun todayOpenCount(ctx: Context, pkg: String, entryCls: String?): Int {
         val usm = ctx.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
         val cal = Calendar.getInstance().apply {
