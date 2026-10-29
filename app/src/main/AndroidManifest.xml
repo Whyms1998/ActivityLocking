@@ -42,9 +42,22 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- 长按任意应用锁磁贴 → 直接打开本 App（替代默认的"应用信息"） -->
-            <intent-filter>
+            <!--
+              长按任意应用锁磁贴 → 直接打开本 App（替代默认的"应用信息"）。
+              ★ 两个关键点（真机实测踩出来的，缺一不可）：
+              1. category DEFAULT —— 系统长按发的是隐式 intent，没有 DEFAULT 类别
+                 根本不会被匹配（v1.5.1~v1.29.1 一直缺这条，长按等于摆设）。
+              2. priority=999 —— HyperOS 的 SystemUI 发的是没有 component/package
+                 的裸隐式 intent，系统里其它声明了该 action 的应用（com.android.settings
+                 开发者选项、permissioncontroller、com.android.camera 等）会一起命中，
+                 弹"选择要使用的应用"选择器。PackageManagerService.chooseBestActivity()
+                 规则：候选里优先级严格最高者直接胜出不弹选择器 → 拉到 999（其余默认 0）。
+              ※ v1.30.0 修复：v2.0.0 重构曾把这段写进一个从未创建的 TilePrefsActivity，
+                导致长按 startActivity 抛 ActivityNotFoundException 被 SystemUI 吞掉。
+            -->
+            <intent-filter android:priority="999">
                 <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
 
@@ -169,34 +182,11 @@
 
 
         <!--
-          长按「全部锁闭」磁贴的落地页。
-          TileService 没有 onLongClick()；系统的长按行为 = 打开磁贴归属应用的
-          偏好/信息页。声明这个 intent-filter 后，长按会优先打开本页，
-          本页再立刻跳 MainActivity，实现「长按进主页」。
-
-          ★ 两个关键点（真机实测踩出来的，缺一不可）：
-          1. category DEFAULT —— 隐式 intent（系统长按发的就是隐式 intent）
-             必须命中 DEFAULT 类别才会被匹配到，否则本页根本不在候选里。
-          2. android:priority=999 —— 实测 HyperOS 的 SystemUI 发的是**没有
-             component / package 的裸隐式 intent**，会被系统里其它同样声明了
-             该 action 的应用（com.android.settings 开发者选项、
-             permissioncontroller、com.android.camera 等）一起命中，
-             系统于是弹出「选择要使用的应用」选择器。
-             而 PackageManagerService.chooseBestActivity() 的规则是：
-             候选里**优先级严格最高**的那一个直接胜出，不弹选择器。
-             所以我们把 priority 拉到 999（其余都是默认 0）即可唯一直选。
+          ※ v1.30.0 已删除原 .core.TilePrefsActivity 声明：该类从未存在于源码
+            （v2.0.0 重构只写进了清单），运行时长按磁贴会因找不到组件被 SystemUI
+            静默吞掉。长按逻辑现由 MainActivity 自己的 QS_TILE_PREFERENCES
+            filter（DEFAULT + priority=999）承接，见上方注释。
         -->
-        <activity
-            android:name=".core.TilePrefsActivity"
-            android:excludeFromRecents="true"
-            android:exported="true"
-            android:noHistory="true"
-            android:theme="@style/Theme.UnlockGate">
-            <intent-filter android:priority="999">
-                <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </activity>
 
         <provider
             android:name="rikka.shizuku.ShizukuProvider"

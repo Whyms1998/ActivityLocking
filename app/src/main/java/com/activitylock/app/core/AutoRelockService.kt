@@ -24,7 +24,9 @@ import java.util.concurrent.TimeUnit
  *
  * 三条触发链路（与 [AutoRelockStore.LINK_*] 一一对应）：
  *  1. **解锁后重新锁**：界面通过验证解锁（[AutoRelock.noteUnlocked] 埋点）后开始计时，
- *     到各自延迟（界面级 > 应用级 > 全局）时重新上锁。
+ *     到各自延迟时重新上锁。★ v1.30.0：期间目标在前台则**暂停计时**（保留累计进度，
+ *     旧实现是直接放弃待锁），离开前台后从暂停处续算 —— 「解锁后一直停在 App 里用」
+ *     不再导致这条链路永远不锁回。
  *  2. **退出后重新锁**：目标应用离开前台 → 按各自延迟计时后重新上锁；
  *     届时把该包下**全部**已解锁、且该界面仍参与「退出后」链路的条目一并锁回
  *     （v1.24.10 起；此前只锁第一条，多界面应用会漏）。
@@ -266,37 +268,36 @@ class AutoRelockService : Service() {
         val pend = AutoRelock.pendingRelock
         if (pend.isEmpty()) return
         val now = SystemClock.elapsedRealtime()
-        val due = pend.filter { (key, rec) ->
-            val (pkg, cls) = AutoRelock.parseKey(key)
-            val delay = AutoRelock.effectiveDelaySec(pkg, cls)
-            rec.isDue(now, delay)
-        }.keys.toList()
-        if (due.isEmpty()) return
 
-        // ★ v1.24.10：前台保护必须能独立拿到「此刻的前台」。
-        //   `lastForeground` 只由 tickExitDelay() 维护，而它仅在「退出后」链路开启时
-        //   才会跑（见 tick() 末尾的提前 return）——只开「解锁后」的用户，
-        //   lastForeground 恒为空串，下面 `pkg == lastForeground` 形同虚设，
-        //   正在使用的 App 会被到点锁掉，用户切走再回来又要验证一遍。
-        //   另外 tick() 里 tickAfterUnlock() 排在 tickExitDelay() **之前**，
-        //   目标 App 刚回到前台的那一拍，lastForeground 还停在上一拍的旧值。
-        //   只在「确实有到点项、马上要锁」时补这一次查询：常态零开销，
-        //   相对紧随其后的 LockEngine.apply（本身要起 Shizuku 子进程）可忽略。
+        // ★ v1.30.0：前台豁免从「放弃待锁」改为「暂停 / 恢复」。
+        //   只要有解锁待锁项，每一拍都要知道此刻前台（暂停判定 + 恢复判定都依赖它），
+        //   常态（无待锁项）零开销。`lastForeground` 仅在「退出后」链路开启时才被
+        //   tickExitDelay 维护，只作冗余兜底，以前台查询结果为准。
+        //   历史包袱说明：v1.24.10 之前只依赖 lastForeground，只开「解锁后」的用户
+        //   该值恒为空串，正在用的 App 会被到点锁掉 —— 所以查询必须独立拿。
         val fgNow = currentForeground()
 
         var changed = false
-        for (key in due) {
+        for ((key, rec) in pend) {
             val (pkg, cls) = AutoRelock.parseKey(key)
             // 该应用的「解锁后」链路已被关掉 → 放弃这次待锁（否则关掉开关还会锁回）
             if (!AutoRelock.isTracked(pkg, cls, AutoRelockStore.LINK_UNLOCK)) {
                 AutoRelock.clearPendingKey(key)
                 continue
             }
-            // 若该界面又回到了前台 → 说明用户正在用，不锁回
-            if (pkg == lastForeground || pkg == fgNow) {
-                AutoRelock.clearPendingKey(key)
+            // ★ v1.30.0：正在用 → 暂停计时（保留累计进度），离开前台后续算到点锁回。
+            //   旧实现（v1.24.10~v1.29.1）在这里 clearPendingKey 直接放弃 —— 用户解锁后
+            //   一直停在这个 App 里撑过延迟，这条链路就永远不会再锁回，感知为「失效」。
+            if (pkg == fgNow || pkg == lastForeground) {
+                if (rec.since > 0L) AutoRelock.pausePending(key)
                 continue
             }
+            // 暂停中且已不在前台 → 恢复计时，下一拍继续按延迟判到期
+            if (rec.since == 0L) {
+                AutoRelock.resumePending(key)
+                continue
+            }
+            if (!rec.isDue(now, AutoRelock.effectiveDelaySec(pkg, cls))) continue
             // 节流：3 秒内已经锁过 → 视为已完成，清掉待锁项
             if (!mayLock(key)) {
                 AutoRelock.clearPendingKey(key)

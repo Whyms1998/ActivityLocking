@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.activitylock.app.core.AppStore
 import com.activitylock.app.core.QuotaState
+import com.activitylock.app.core.UsageTracker
 import com.activitylock.app.ui.theme.ActivityLockTheme
 
 /**
@@ -31,8 +32,16 @@ class QuotaGateActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppStore.ensureInit(applicationContext)
+        // ★ v1.30.0：区分超额维度 —— 时长超额显示分钟读数，次数超额显示解锁次数读数
         val over = QuotaState.overPackages(this).map { pkg ->
-            AppStore.findApp(pkg)?.label ?: pkg.substringAfterLast('.')
+            val label = AppStore.findApp(pkg)?.label ?: pkg.substringAfterLast('.')
+            val min = QuotaState.quotaPackages(AppStore.rules)[pkg]
+            val cnt = QuotaState.quotaCntPackages(AppStore.rules)[pkg]
+            val parts = buildList {
+                if (min != null) add("时长 ${UsageTracker.todayMinutes(this@QuotaGateActivity, pkg)}/$min 分钟")
+                if (cnt != null) add("已解锁 ${QuotaState.usedCounts(this@QuotaGateActivity)[pkg] ?: 0}/$cnt 次")
+            }
+            if (parts.isEmpty()) label else "$label（${parts.joinToString("，")}）"
         }
         setContent {
             ActivityLockTheme {

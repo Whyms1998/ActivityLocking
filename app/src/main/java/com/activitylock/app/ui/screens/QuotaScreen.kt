@@ -71,7 +71,10 @@ private fun refresh(ctx: android.content.Context) {
 fun QuotaScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val rules = AppStore.rules
-    val quotaPkgs = QuotaState.quotaPackages(rules)
+    // ★ v1.30.0：时长与次数两个维度并列展示，任一维度有配置的包都进列表
+    val timeQuota = QuotaState.quotaPackages(rules)
+    val cntQuota = QuotaState.quotaCntPackages(rules)
+    val quotaPkgs = timeQuota.keys + cntQuota.keys
     val hasPermission = UsageTracker.hasPermission(context)
     var adding by remember { mutableStateOf(false) }
     var addingSession by remember { mutableStateOf(false) }
@@ -92,7 +95,7 @@ fun QuotaScreen(onBack: () -> Unit) {
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("时长限额", style = MaterialTheme.typography.titleMedium) },
+                title = { Text("每日限额", style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
@@ -125,6 +128,7 @@ fun QuotaScreen(onBack: () -> Unit) {
             } else {
                 Text(
                     "屏幕亮着时每分钟统计一次；超额后点图标会看到额度提示页，次日 0 点重置。\n" +
+                        "每日解锁次数按「验证通过并放行」计数，用满同样整包拦到额度页。\n" +
                         "手动解锁（通过该界面的解锁条件验证）优先于限额。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -206,16 +210,20 @@ fun QuotaScreen(onBack: () -> Unit) {
                     Text("还没有限额", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "点右上角「＋」为已锁定规则的 App 设置每日使用时长上限，例如抖音每天 20 分钟。",
+                        "点右上角「＋」为已锁定规则的 App 设置每日上限：可用时长（例如抖音每天 20 分钟）、解锁次数，或两者都限。",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             } else {
                 LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
-                    items(quotaPkgs.keys.sorted(), key = { it }) { pkg ->
-                        val min = quotaPkgs[pkg] ?: 0
+                    items(quotaPkgs.sorted(), key = { it }) { pkg ->
+                        val min = timeQuota[pkg]
+                        val cnt = cntQuota[pkg]
                         val used = if (hasPermission) UsageTracker.todayMinutes(context, pkg) else 0
+                        val cntUsed = QuotaState.usedCounts(context)[pkg] ?: 0
+                        val overTime = min != null && used >= min
+                        val overCnt = cnt != null && cntUsed >= cnt
                         val label = AppStore.findApp(pkg)?.label ?: pkg.substringAfterLast('.')
                         Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp)) {
                             Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -224,21 +232,34 @@ fun QuotaScreen(onBack: () -> Unit) {
                                 Column(Modifier.weight(1f)) {
                                     Text(label, style = MaterialTheme.typography.titleSmall)
                                     Spacer(Modifier.height(4.dp))
-                                    Text(
-                                        // ★ 规范 §1：原来「今日已用 X/Y 分钟 · 已超额」——超额是结论不是并列项
-                                        if (used >= min) "今日已用 $used/$min 分钟（已超额）"
-                                        else "今日已用 $used/$min 分钟",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = if (used >= min) MaterialTheme.colorScheme.error
-                                        else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Spacer(Modifier.height(4.dp))
-                                    LinearProgressIndicator(
-                                        progress = {
-                                            (used.toFloat() / min.toFloat()).coerceIn(0f, 1f)
-                                        },
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
+                                    // ★ v1.30.0：时长 / 次数两个维度各占一行（都配置时），超额标红
+                                    if (min != null) {
+                                        Text(
+                                            if (overTime) "今日已用 $used/$min 分钟（已超额）"
+                                            else "今日已用 $used/$min 分钟",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (overTime) MaterialTheme.colorScheme.error
+                                            else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    if (cnt != null) {
+                                        Text(
+                                            if (overCnt) "今日已解锁 $cntUsed/$cnt 次（已超额）"
+                                            else "今日已解锁 $cntUsed/$cnt 次",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (overCnt) MaterialTheme.colorScheme.error
+                                            else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    if (min != null) {
+                                        Spacer(Modifier.height(4.dp))
+                                        LinearProgressIndicator(
+                                            progress = {
+                                                (used.toFloat() / min.toFloat()).coerceIn(0f, 1f)
+                                            },
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    }
                                 }
                                 IconButton(onClick = { removing = pkg }) {
                                     Icon(Icons.Default.Delete, contentDescription = "移除限额")
@@ -254,12 +275,13 @@ fun QuotaScreen(onBack: () -> Unit) {
 
     if (adding) {
         val candidates = rules.map { it.packageName }.distinct()
-            .filter { it !in quotaPkgs.keys }
+            .filter { it !in quotaPkgs }
         QuotaAddDialog(
             candidates = candidates,
-            onConfirm = { pkg, min ->
+            onConfirm = { pkg, min, cnt ->
                 for (r in rules.filter { it.packageName == pkg }) {
                     AppStore.updateQuota(r.packageName, r.activityName, min)
+                    AppStore.updateQuotaCnt(r.packageName, r.activityName, cnt)
                 }
                 refresh(context)
                 adding = false
@@ -288,18 +310,16 @@ fun QuotaScreen(onBack: () -> Unit) {
         val over = pkg in QuotaState.overPackages(context)
         AlertDialog(
             onDismissRequest = { removing = null },
-            title = { Text("移除限额？") },
+            title = { Text("移除每日限额？") },
             text = { Text(
                 if (over) "「${AppStore.findApp(pkg)?.label ?: pkg}」今日已超额。移除限额将立刻恢复该 App 的使用，需要先通过验证。"
-                else "「${AppStore.findApp(pkg)?.label ?: pkg}」将不再限制每日使用时长。"
+                else "「${AppStore.findApp(pkg)?.label ?: pkg}」将不再限制每日使用时长与解锁次数。"
             ) },
             confirmButton = {
                 TextButton(onClick = {
                     removing = null
                     if (over) pendingVerifyRemove = pkg else {
-                        for (r in rules.filter { it.packageName == pkg }) {
-                            AppStore.updateQuota(r.packageName, r.activityName, null)
-                        }
+                        clearPkgQuota(rules, pkg, context)
                         refresh(context)
                     }
                 }) { Text(if (over) "验证并移除" else "移除") }
@@ -315,9 +335,7 @@ fun QuotaScreen(onBack: () -> Unit) {
             hint = "该 App 今日已超额，移除限额等于提前解锁它",
             onConfirmed = {
                 pendingVerifyRemove = null
-                for (r in rules.filter { it.packageName == pkg }) {
-                    AppStore.updateQuota(r.packageName, r.activityName, null)
-                }
+                clearPkgQuota(rules, pkg, context)
                 QuotaState.clearOver(context, pkg)
                 refresh(context)
             },
@@ -326,10 +344,19 @@ fun QuotaScreen(onBack: () -> Unit) {
     }
 }
 
+/** ★ v1.30.0：移除某包的全部限额（时长 + 次数）并清掉次数计数。 */
+private fun clearPkgQuota(rules: List<LockRule>, pkg: String, ctx: android.content.Context) {
+    for (r in rules.filter { it.packageName == pkg }) {
+        AppStore.updateQuota(r.packageName, r.activityName, null)
+        AppStore.updateQuotaCnt(r.packageName, r.activityName, null)
+    }
+    QuotaState.clearCount(ctx, pkg)
+}
+
 @Composable
 private fun QuotaAddDialog(
     candidates: List<String>,
-    onConfirm: (String, Int) -> Unit,
+    onConfirm: (String, Int, Int?) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var selected by remember { mutableStateOf(candidates.firstOrNull() ?: "") }
@@ -339,6 +366,10 @@ private fun QuotaAddDialog(
     var limitSec by remember { mutableStateOf(20 * 60) }
     val limitMin = limitSec / 60
     val overDay = limitMin > 1440
+    // ★ v1.30.0：每日解锁次数（可留空 = 不限次数）
+    var cntText by remember { mutableStateOf("") }
+    val cntVal = cntText.toIntOrNull()
+    val cntInvalid = cntText.isNotBlank() && (cntVal == null || cntVal !in 1..999)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("添加限额") },
@@ -379,12 +410,28 @@ private fun QuotaAddDialog(
                     color = if (overDay) MaterialTheme.colorScheme.error
                     else MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = cntText,
+                    onValueChange = { cntText = it.filter { c -> c.isDigit() }.take(3) },
+                    label = { Text("每日解锁次数（留空不限）") },
+                    singleLine = true,
+                    isError = cntInvalid,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "按「验证通过并放行」计数；用满后当天拦截该 App",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (cntInvalid) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         },
         confirmButton = {
             TextButton(
-                enabled = selected.isNotBlank() && limitMin in 1..1440,
-                onClick = { onConfirm(selected, limitMin) }
+                enabled = selected.isNotBlank() && limitMin in 1..1440 && !cntInvalid,
+                onClick = { onConfirm(selected, limitMin, cntVal?.takeIf { it in 1..999 }) }
             ) { Text("保存") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }

@@ -22,6 +22,9 @@ data class LockRule(
     val quizCount: Int? = null,
     /** 每日使用限额（分钟），null=不限额。按 App（包名）生效，同一包取最大值。 */
     val quotaMin: Int? = null,
+    /** ★ v1.30.0：每日解锁次数上限，null=不限次数。按包生效，同一包取最大值。
+     *  计数点 = 解锁验证通过并真正放行（LockEngine.unlock）；点图标被拦不消耗额度。 */
+    val quotaCnt: Int? = null,
     /** 锁定有效期（epoch 毫秒）：到期后该规则自动失效（无需手动解锁）。0=不自动到期。 */
     val lockUntil: Long = 0,
     val createdAt: Long = System.currentTimeMillis(),
@@ -235,6 +238,17 @@ class RuleStore(filesDir: File) {
         _rules.value = _rules.value.map {
             if (it.packageName == pkg && it.activityName == cls) it.copy(
                 quotaMin = min?.coerceIn(1, 1440)
+            ) else it
+        }
+        save()
+    }
+
+    /** ★ v1.30.0：设置单条规则的每日解锁次数上限。cnt=null 表示不限次数。上限 999（对齐全局次数口径）。 */
+    @Synchronized
+    fun updateQuotaCnt(pkg: String, cls: String, cnt: Int?) {
+        _rules.value = _rules.value.map {
+            if (it.packageName == pkg && it.activityName == cls) it.copy(
+                quotaCnt = cnt?.coerceIn(1, 999)
             ) else it
         }
         save()

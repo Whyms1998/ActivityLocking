@@ -95,7 +95,9 @@ class QuotaService : Service() {
             if (QuotaState.resetIfNewDay(this)) AmsController.writeRules()
 
             val quota = QuotaState.quotaPackages(AppStore.rules)
-            if (quota.isEmpty()) {
+            val cntQuota = QuotaState.quotaCntPackages(AppStore.rules)
+            // ★ v1.30.0：时长与次数任一维度有配置就继续守护（次数是事件驱动，无需轮询）
+            if (quota.isEmpty() && cntQuota.isEmpty()) {
                 stopSelf()
                 return
             }
@@ -163,11 +165,11 @@ class QuotaService : Service() {
         private const val NOTIFY_ID = 2001
         private const val NOTIFY_EXCEEDED_ID = 2002
 
-        /** 有限额配置时启动守护服务；否则停止。任何异常都不能影响调用方。 */
+        /** 有限额配置（时长或次数）时启动守护服务；否则停止。任何异常都不能影响调用方。 */
         fun startIfQuotaConfigured(ctx: Context) {
             runCatching {
                 AppStore.ensureInit(ctx)
-                val hasQuota = AppStore.rules.any { it.quotaMin != null }
+                val hasQuota = AppStore.rules.any { it.quotaMin != null || it.quotaCnt != null }
                 if (hasQuota) {
                     ctx.startForegroundService(Intent(ctx, QuotaService::class.java))
                 } else {

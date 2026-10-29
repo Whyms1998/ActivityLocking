@@ -500,6 +500,36 @@ object AutoRelock {
         }
     }
 
+    /**
+     * ★ v1.30.0：「解锁后」链路的前台豁免从「放弃待锁」改为「暂停计时」。
+     *   把当前计时段结算进 [PendingRec.accMs] 后将 since 置 0（暂停，不清零），
+     *   目标离开前台后由 [resumePending] 续算 —— 与锁屏链路 S10 同一套累计写法。
+     */
+    fun pausePending(key: String) {
+        val rec = pendingRelock[key] ?: return
+        if (rec.since <= 0L) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        pendingRelock = pendingRelock + (key to rec.copy(
+            accMs = rec.accMs + (now - rec.since).coerceAtLeast(0L),
+            since = 0L,
+            wall = System.currentTimeMillis(),
+            boot = BootClock.mark(),
+        ))
+        persistUnlock()
+    }
+
+    /** ★ v1.30.0：目标已不在前台 → 从现在起继续计时（仅对暂停中的记录生效）。 */
+    fun resumePending(key: String) {
+        val rec = pendingRelock[key] ?: return
+        if (rec.since > 0L) return
+        pendingRelock = pendingRelock + (key to rec.copy(
+            since = android.os.SystemClock.elapsedRealtime(),
+            wall = System.currentTimeMillis(),
+            boot = BootClock.mark(),
+        ))
+        persistUnlock()
+    }
+
     private fun keyOf(pkg: String, cls: String?): String = "$pkg/${cls ?: "*"}"
 
     fun parseKey(key: String): Pair<String, String?> {

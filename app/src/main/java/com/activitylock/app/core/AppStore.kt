@@ -181,6 +181,13 @@ object AppStore {
         rules = ruleStore.rules
     }
 
+    /** ★ v1.30.0：设置单条规则的每日解锁次数上限。cnt=null 表示不限次数。 */
+    fun updateQuotaCnt(pkg: String, cls: String, cnt: Int?) {
+        if (!::ruleStore.isInitialized) return
+        ruleStore.updateQuotaCnt(pkg, cls, cnt)
+        rules = ruleStore.rules
+    }
+
     /**
      * 设置**应用级**解锁条件（整个 App 的默认解锁方式）。
      * mode=null 表示清除该层、回到「跟随全局」。

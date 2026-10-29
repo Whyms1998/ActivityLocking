@@ -153,7 +153,7 @@ fun SettingsScreen(
         )
         SettingsEntry(
             icon = Icons.Default.HourglassBottom,
-            title = "时长限额",
+            title = "每日限额",
             onClick = onOpenQuota
         )
         SettingsEntry(
