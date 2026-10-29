@@ -1225,6 +1225,10 @@ fun FavoritesScreen(
         var redirectOn by remember(rule) { mutableStateOf(redirect.isNotBlank()) }
         // ★ v1.24.9：每日限额改用统一的时长输入（分钟 / 小时）；0 = 不限
         var quotaSec by remember(rule) { mutableStateOf((rule.quotaMin ?: 0) * 60) }
+        // ★ v1.30.0：每日解锁次数（留空 = 不限），与「每日限额」页完全同一套输入口径
+        var cntText by remember(rule) { mutableStateOf(rule.quotaCnt?.toString() ?: "") }
+        val cntVal = cntText.toIntOrNull()
+        val cntInvalid = cntText.isNotBlank() && (cntVal == null || cntVal !in 1..999)
         // ---- 到点跳转（默认关；与时长限额同一套 UI）----
         val sessionExisting = AppStore.sessionCfgs.firstOrNull { it.pkg == rule.packageName }
         var sessionOn by remember(rule) { mutableStateOf(sessionExisting != null) }
@@ -1245,6 +1249,8 @@ fun FavoritesScreen(
                 rule.packageName, rule.activityName,
                 if (quotaSec < 60) null else quotaSec / 60
             )
+            // ★ v1.30.0：每日解锁次数（留空 = 不限），与时长同点保存
+            AppStore.updateQuotaCnt(rule.packageName, rule.activityName, cntVal?.takeIf { it in 1..999 })
             // 到点跳转：开 = 保存配置（秒 → 分钟），关 = 清除
             if (sessionOn) {
                 val t = sessionTarget.trim()
@@ -1360,6 +1366,49 @@ fun FavoritesScreen(
                             }
                         },
                     )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        if (quotaOver) "超出上限：每天最多 24 小时（1440 分钟）"
+                        else "超额后当天拦截该 App，次日 0 点重置",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (quotaOver) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    // ★ v1.30.0：每日解锁次数 —— 与「每日限额」页（QuotaAddDialog）同款输入：
+                    //   只过滤非数字 + 限 3 位，不 coerceIn；越界只标红，点保存时拦截。
+                    OutlinedTextField(
+                        value = cntText,
+                        onValueChange = { cntText = it.filter { c -> c.isDigit() }.take(3) },
+                        label = { Text("每日解锁次数（留空不限）") },
+                        singleLine = true,
+                        isError = cntInvalid,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "按「验证通过并放行」计数；用满后当天拦截该 App",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (cntInvalid) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    // ★ 限额生效口径是「按包合并、同包取最大」：同一 App 的多个界面
+                    //   配置不一致时必须明说，否则这里显示的值和实际裁决不符（假开关红线）。
+                    run {
+                        val pkgRules = AppStore.rules.filter { it.packageName == rule.packageName }
+                        val timeVals = pkgRules.mapNotNull { it.quotaMin }
+                        val cntVals = pkgRules.mapNotNull { it.quotaCnt }
+                        val mergedDiff = (timeVals.size > 1 && timeVals.max() != rule.quotaMin) ||
+                            (cntVals.size > 1 && cntVals.max() != rule.quotaCnt)
+                        if (mergedDiff) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "同一 App 的多个界面都配了限额时，生效值取最大",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                     Spacer(Modifier.height(12.dp))
                     // ---- 到点跳转（默认关；开启后才能设置，与时长限额同一套 UI）----
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1425,7 +1474,7 @@ fun FavoritesScreen(
             confirmButton = {
                 // 超出「一天」的限额没有意义（RuleStore 也会兜底），所以超限时禁用保存；
                 // 但用户在回显里能看到原因，不是"按钮莫名点不动"。
-                TextButton(enabled = !quotaOver, onClick = { doSave() }) { Text("保存") }
+                TextButton(enabled = !quotaOver && !cntInvalid, onClick = { doSave() }) { Text("保存") }
             },
             dismissButton = {
                 TextButton(onClick = { editing = null }) { Text("取消") }
