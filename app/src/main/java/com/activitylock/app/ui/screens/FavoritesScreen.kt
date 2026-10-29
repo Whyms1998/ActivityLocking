@@ -101,8 +101,6 @@ import com.activitylock.app.core.LockOutcome
 import com.activitylock.app.core.LockRule
 import com.activitylock.app.core.FocusEngine
 import com.activitylock.app.core.FocusState
-import com.activitylock.app.core.QuotaState
-import com.activitylock.app.core.UsageTracker
 import com.activitylock.app.core.Scene
 import com.activitylock.app.core.SceneEngine
 import com.activitylock.app.core.UnlockExemptions
@@ -1384,28 +1382,39 @@ private fun RuleEditDialog(
     var redirect by remember(rule) { mutableStateOf(rule.redirectUri ?: "") }
     /** 应用跳转开关：关 = 仅拦截（redirect 存空）；开 = 显示目标输入。 */
     var redirectOn by remember(rule) { mutableStateOf(redirect.isNotBlank()) }
-    // ★ v1.24.9：每日限额改用统一的时长输入（分钟 / 小时）；0 = 不限
-    var quotaSec by remember(rule) { mutableStateOf((rule.quotaMin ?: 0) * 60) }
-    // ★ v1.31.0：每日打开次数（留空 = 不限）。语义 = 每次打开该 App 计 1 次（系统事件统计），
-    //   覆盖验证解锁、跳转直达、通知点开一切入口。
-    var cntText by remember(rule) { mutableStateOf(rule.quotaCnt?.toString() ?: "") }
+    // ★ v1.32.0：这里是**这个界面**（pkg/cls）的每日监督额度，不是整包。
+    //   - 该界面自己被某个任务监督（且独占一套规则）→ 可就地改；
+    //   - 只有整包任务在管这个 App → 只读（就地改会改到整个 App 的额度）；
+    //   - 完全没有任务 → 可就地新建一个只含该界面的任务。
+    val exactQuotaTask = remember(rule) {
+        AppStore.tasks.firstOrNull { t ->
+            t.targets.any { it.key == "${rule.packageName}/${rule.activityName}" }
+        }
+    }
+    val wholeQuotaTask = remember(rule) {
+        AppStore.tasks.firstOrNull { t -> t.targets.any { it.key == rule.packageName } }
+    }
+    val quotaTask = exactQuotaTask ?: wholeQuotaTask
+    val quotaEditable = (exactQuotaTask != null && exactQuotaTask.targets.size <= 1) ||
+        (exactQuotaTask == null && wholeQuotaTask == null)
+    var quotaSec by remember(rule) { mutableStateOf(exactQuotaTask?.rules?.dayLimitSec ?: 0) }
+    var cntText by remember(rule) {
+        mutableStateOf(exactQuotaTask?.rules?.dayLimitCnt?.toString() ?: "")
+    }
     val cntVal = cntText.toIntOrNull()
     val cntInvalid = cntText.isNotBlank() && (cntVal == null || cntVal !in 1..999)
+    val quotaOver = quotaSec / 60 > 1440
+    val overNow = remember(rule) {
+        com.activitylock.app.core.SuperviseEngine.blocks(ctx).any {
+            it.key == rule.packageName || it.key == "${rule.packageName}/${rule.activityName}"
+        }
+    }
+    var saveNeedsVerify by remember(rule) { mutableStateOf(false) }
     // ---- 到点跳转（默认关；与时长限额同一套 UI）----
     val sessionExisting = AppStore.sessionCfgs.firstOrNull { it.pkg == rule.packageName }
     var sessionOn by remember(rule) { mutableStateOf(sessionExisting != null) }
     var sessionTarget by remember(rule) { mutableStateOf(sessionExisting?.target ?: "") }
     var sessionLimitSec by remember(rule) { mutableStateOf((sessionExisting?.limitMin ?: 5) * 60) }
-    val quotaOver = quotaSec / 60 > 1440
-    // ★ v1.31.0：超额拦截中修改限额 = 解除拦截 = 削弱类动作 → 必须先过验证。
-    //   （此前「调大限额立即解除」是一条不经验证的口子，超额形同虚设。）
-    var saveNeedsVerify by remember(rule) { mutableStateOf(false) }
-    // 超额状态与打开次数读数（打开弹窗时快照；prefs 非 Compose 状态，不订阅变化）
-    val cntUsedNow = remember(rule) {
-        val entryCls = AppStore.findApp(rule.packageName)?.activities?.firstOrNull { it.isLauncher }?.cls
-        UsageTracker.todayOpenCount(ctx, rule.packageName, entryCls)
-    }
-    val overNow = remember(rule) { rule.packageName in QuotaState.overPackages(ctx) }
     // ★「弹不出输入法」的直接修复：打开即把焦点放到备注框并**主动唤起键盘**。
     val noteFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
@@ -1415,13 +1424,15 @@ private fun RuleEditDialog(
     }
     fun doSave() {
         AppStore.updateNote(rule.packageName, rule.activityName, text)
-        // 0 / 不足 1 分钟 = 不限额（对应 null）
-        AppStore.updateQuota(
-            rule.packageName, rule.activityName,
-            if (quotaSec < 60) null else quotaSec / 60
-        )
-        // ★ v1.31.0：每日打开次数（留空 = 不限），与时长同点保存
-        AppStore.updateQuotaCnt(rule.packageName, rule.activityName, cntVal?.takeIf { it in 1..999 })
+        // 这个界面的每日监督额度（界面级对象）：独占任务 → 就地改；没任务 → 新建一个
+        if (quotaEditable) {
+            val ok = AppStore.setTargetQuota(
+                rule.packageName, rule.activityName,
+                quotaSec.takeIf { it >= 60 },
+                cntVal?.takeIf { it in 1..999 },
+            )
+            if (!ok) AppStore.toast("该界面被多对象任务共用，请去「APP 监督」调整")
+        }
         // 到点跳转：开 = 保存配置（秒 → 分钟），关 = 清除
         if (sessionOn) {
             val t = sessionTarget.trim()
@@ -1436,10 +1447,8 @@ private fun RuleEditDialog(
         } else {
             AppStore.removeSession(rule.packageName)
         }
-        // 跳转目标/超额状态影响 Watcher 规则，立即同步；限额需要守护服务
-        com.activitylock.app.core.QuotaService.startIfQuotaConfigured(ctx)
-        // ★ v1.30.2：限额刚被调大/取消，残留的超额状态立即重估解除（不等次日/巡检）
-        com.activitylock.app.core.QuotaService.reevaluateOver(ctx)
+        // 跳转目标影响 Watcher 规则，立即同步（限额已迁到独立的监督任务）
+        com.activitylock.app.core.AmsController.writeRules()
         onDismiss()
         // ★ 走 LockEngine.saveRedirect：必要时把该条目切到「拦截模式 + 组件启用」，
         //   否则给一条 pm 模式的条目补填跳转只会静默无效（详见 LockEngine 注释）。
@@ -1450,13 +1459,13 @@ private fun RuleEditDialog(
         }
     }
     fun quotaValuesChanged(): Boolean {
-        val newMin = if (quotaSec < 60) null else quotaSec / 60
+        val newSec = quotaSec.takeIf { it >= 60 }
         val newCnt = cntVal?.takeIf { it in 1..999 }
-        return newMin != rule.quotaMin || newCnt != rule.quotaCnt
+        return newSec != quotaTask?.rules?.dayLimitSec || newCnt != quotaTask?.rules?.dayLimitCnt
     }
     fun requestSave() {
-        // 超额拦截中 + 限额值有变化 → 先验证再保存；其他情况直接保存
-        saveNeedsVerify = overNow && quotaValuesChanged()
+        // 该对象正在被拦 + 额度值有变化 → 先验证再保存（改额度 = 解除拦截）
+        saveNeedsVerify = quotaEditable && overNow && quotaValuesChanged()
         if (!saveNeedsVerify) doSave()
     }
     AlertDialog(
@@ -1520,77 +1529,61 @@ private fun RuleEditDialog(
                     )
                 }
                 Spacer(Modifier.height(8.dp))
-                // ★ v1.24.9：与自动锁闭详情页同构 —— 每日限额统一走 [DurationField]。
-                //   清空 = 0 = 不限额度；限额按分钟统计，所以单位只开放 分钟 / 小时，
-                //   保证「填多少就存多少」，不做任何取整。
-                Text("每日限额（留空不限）", style = MaterialTheme.typography.labelMedium)
-                DurationField(
-                    seconds = quotaSec,
-                    onChange = { quotaSec = it },
-                    units = listOf(DurationUnit.MIN, DurationUnit.HOUR),
-                    equivalent = { sec ->
+                // ★ v1.32.0：这里是**这个界面**（pkg/cls）的每日监督额度。
+                //   数据源是监督任务：该对象独占一个任务时就地改；属于多对象任务时只读。
+                Text("每日监督（这个界面）", style = MaterialTheme.typography.labelMedium)
+                if (!quotaEditable) {
+                    Text(
                         when {
-                            sec <= 0 -> "不限额"
-                            sec / 60 > 1440 -> "超出上限：每天最多 24 小时"
-                            else -> "每天可用 " + relockDelayLabel(sec)
-                        }
-                    },
-                )
-                Spacer(Modifier.height(4.dp))
-                if (quotaOver) {
-                    Text(
-                        "超出上限：每天最多 24 小时（1440 分钟）",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error
+                            exactQuotaTask != null ->
+                                "已属于任务「${exactQuotaTask.name}」（${exactQuotaTask.targets.size} 个对象共用一套规则），" +
+                                    "请去「设置 → APP 监督」调整"
+                            else ->
+                                "该 App 由整包任务「${wholeQuotaTask?.name}」监督，这个界面跟着整包走；" +
+                                    "调整请去「设置 → APP 监督」"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(Modifier.height(4.dp))
-                }
-                Spacer(Modifier.height(8.dp))
-                // ★ v1.31.0：每日打开次数 —— 数字专用键盘（无候选栏，修「输入数字时
-                //   上下滑动闪屏」：中文输入法的 composing 预编辑会反复触发布局/窗口
-                //   高度变化）；只过滤非数字 + 限 3 位，不 coerceIn；越界只标红，点保存时拦截。
-                OutlinedTextField(
-                    value = cntText,
-                    onValueChange = { cntText = it.filter { c -> c.isDigit() }.take(3) },
-                    label = { Text("每日打开次数（留空不限）") },
-                    singleLine = true,
-                    isError = cntInvalid,
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
-                        imeAction = androidx.compose.ui.text.input.ImeAction.Done
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                // ★ v1.30.2：把「已用多少 / 是否拦截中」直接摆出来——
-                //   此前超额状态完全不可见，用户改了限额也以为没生效。
-                if (overNow) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "今日已超额，整包拦截中；调整限额需先通过验证",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error
+                } else {
+                    DurationField(
+                        seconds = quotaSec,
+                        onChange = { quotaSec = it },
+                        units = listOf(DurationUnit.MIN, DurationUnit.HOUR),
+                        equivalent = { sec ->
+                            when {
+                                sec <= 0 -> "不限时长"
+                                sec / 60 > 1440 -> "超出上限：每天最多 24 小时"
+                                else -> "每天可用 " + relockDelayLabel(sec)
+                            }
+                        },
                     )
-                }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "今日已打开 $cntUsedNow 次",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                // ★ 限额生效口径是「按包合并、同包取最大」：同一 App 的多个界面
-                //   配置不一致时必须明说，否则这里显示的值和实际裁决不符（假开关红线）。
-                run {
-                val pkgRules = AppStore.rules.filter { it.packageName == rule.packageName }
-                val timeVals = pkgRules.mapNotNull { it.quotaMin }
-                    val cntVals = pkgRules.mapNotNull { it.quotaCnt }
-                    val mergedDiff = (timeVals.size > 1 && timeVals.max() != rule.quotaMin) ||
-                        (cntVals.size > 1 && cntVals.max() != rule.quotaCnt)
-                    if (mergedDiff) {
+                    if (quotaOver) {
+                        Text(
+                            "超出上限：每天最多 24 小时（1440 分钟）",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = cntText,
+                        onValueChange = { cntText = it.filter { c -> c.isDigit() }.take(3) },
+                        label = { Text("每天最多打开（留空不限）") },
+                        singleLine = true,
+                        isError = cntInvalid,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
+                            imeAction = androidx.compose.ui.text.input.ImeAction.Done
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (overNow) {
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "同一 App 的多个界面都配了限额时，生效值取最大",
+                            "这个界面今日已被拦下；调整额度需要先通过验证",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.error
                         )
                     }
                 }
@@ -1650,22 +1643,22 @@ private fun RuleEditDialog(
             }
         },
         confirmButton = {
-            // 超出「一天」的限额没有意义（RuleStore 也会兜底），所以超限时禁用保存；
-            // 但用户在回显里能看到原因，不是"按钮莫名点不动"。
-            TextButton(enabled = !quotaOver && !cntInvalid, onClick = { requestSave() }) { Text("保存") }
+            TextButton(
+                enabled = !quotaEditable || (!quotaOver && !cntInvalid),
+                onClick = { requestSave() }
+            ) { Text("保存") }
         },
         dismissButton = {
             TextButton(onClick = { onDismiss() }) { Text("取消") }
         }
     )
 
-    // ★ v1.31.0：超额拦截中修改限额 → 先验证再保存（解锁条件用全局最强要求，
-    //   与配额页「移除限额验证」同一道闸，堵住「调大上限免验证解除拦截」的口子）
+    // 该对象正在被拦 + 额度有变化 → 先验证（改额度等于解除拦截）
     if (saveNeedsVerify) {
         com.activitylock.app.ui.components.UnlockVerifyDialog(
             requirement = VerifyGate.bulkRequirement(ctx, AppStore.rules),
-            title = "调整限额验证",
-            hint = "该 App 今日已超额拦截中，调整限额等于解除拦截",
+            title = "调整额度验证",
+            hint = "该界面今日已被拦下，调整额度等于解除拦截",
             onConfirmed = {
                 saveNeedsVerify = false
                 doSave()

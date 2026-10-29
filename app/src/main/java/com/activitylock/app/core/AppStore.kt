@@ -50,6 +50,13 @@ object AppStore {
     var appVerify by mutableStateOf<Map<String, AppVerify>>(emptyMap())
         private set
 
+    /**
+     * ★ v1.32.0：APP 监督任务（替代原先挂在 LockRule 上的每日限额）。
+     * 任务 = 一组监督对象 + 一套规则 + 生效时段，与「锁定/验证」完全解耦。
+     */
+    var tasks by mutableStateOf<List<SuperviseTask>>(emptyList())
+        private set
+
     private lateinit var ruleStore: RuleStore
     private lateinit var historyStore: HistoryStore
     private lateinit var presetStore: PresetStore
@@ -57,6 +64,7 @@ object AppStore {
     private lateinit var sceneStore: SceneStore
     private lateinit var sessionStore: SessionStore
     private lateinit var groupStore: GroupStore
+    private lateinit var taskStore: TaskStore
     private lateinit var appContext: Context
     private val scope = kotlinx.coroutines.CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
 
@@ -76,6 +84,7 @@ object AppStore {
         sceneStore = SceneStore(appContext.filesDir)
         sessionStore = SessionStore(appContext.filesDir)
         groupStore = GroupStore(appContext.filesDir)
+        taskStore = TaskStore(appContext.filesDir)
         rules = ruleStore.rules
         history = historyStore.entries
         userPresets = presetStore.presets
@@ -85,6 +94,8 @@ object AppStore {
         groups = groupStore.groups
         groupAssign = groupStore.assignment
         appVerify = ruleStore.appVerify
+        tasks = taskStore.tasks
+        migrateQuotasToTasks()
         // ★ 把「应用级解锁条件」的来源交给 VerifyGate：它的 requirementFor() 是纯静态
         //   调用点极多（磁贴 / 临时解锁 / 场景 / 收藏夹 / 自动锁闭页…），
         //   用 provider 注入可以一次性拿到三级链，无需改动全部调用点。
@@ -175,17 +186,159 @@ object AppStore {
         rules = ruleStore.rules
     }
 
-    fun updateQuota(pkg: String, cls: String, min: Int?) {
-        if (!::ruleStore.isInitialized) return
-        ruleStore.updateQuota(pkg, cls, min)
-        rules = ruleStore.rules
+    // ---------------- ★ v1.32.0：APP 监督任务 ----------------
+    // 限额从「LockRule 的字段」升级为「任务」：一组监督对象（整包/单界面）+ 一套规则
+    // + 生效时段。与锁定/验证彻底解耦——只限额不需要把 App 加进收藏夹。
+
+    fun upsertTask(task: SuperviseTask) {
+        if (!::taskStore.isInitialized) return
+        taskStore.upsert(task)
+        tasks = taskStore.tasks
+        notifySuperviseChanged()
     }
 
-    /** ★ v1.30.0：设置单条规则的每日打开次数上限。cnt=null 表示不限次数。 */
-    fun updateQuotaCnt(pkg: String, cls: String, cnt: Int?) {
-        if (!::ruleStore.isInitialized) return
-        ruleStore.updateQuotaCnt(pkg, cls, cnt)
-        rules = ruleStore.rules
+    fun removeTask(id: String) {
+        if (!::taskStore.isInitialized) return
+        taskStore.remove(id)
+        tasks = taskStore.tasks
+        notifySuperviseChanged()
+    }
+
+    fun setTaskEnabled(id: String, on: Boolean) {
+        if (!::taskStore.isInitialized) return
+        taskStore.setEnabled(id, on)
+        tasks = taskStore.tasks
+        notifySuperviseChanged()
+    }
+
+    fun addTaskTarget(id: String, t: SuperviseTarget) {
+        if (!::taskStore.isInitialized) return
+        taskStore.addTarget(id, t)
+        tasks = taskStore.tasks
+        notifySuperviseChanged()
+    }
+
+    fun removeTaskTarget(id: String, key: String) {
+        if (!::taskStore.isInitialized) return
+        taskStore.removeTarget(id, key)
+        tasks = taskStore.tasks
+        notifySuperviseChanged()
+    }
+
+    /**
+     * ★ v1.32.0：找出包含该监督对象的任务。
+     * 先精确匹配「界面级对象」，再退到「整包对象」——工作台编辑的是具体界面，
+     * 按包名整包匹配会把「微信整包任务」错显示成「朋友圈的监督」。
+     */
+    fun taskForTarget(pkg: String, cls: String? = null): SuperviseTask? {
+        if (!::taskStore.isInitialized) return null
+        val key = if (cls.isNullOrBlank()) pkg else "$pkg/$cls"
+        return tasks.firstOrNull { t -> t.targets.any { it.key == key } }
+            ?: if (!cls.isNullOrBlank()) {
+                tasks.firstOrNull { t -> t.targets.any { it.key == pkg } }
+            } else null
+    }
+
+    /**
+     * 工作台就地设置某个对象的每日额度。
+     *
+     * 三种情况：
+     *  - 该对象独占一个任务 → 直接改它的规则；
+     *  - 该对象属于「多对象任务」（一套规则管好几个 App/界面）→ 不动，返回 false
+     *    （就地改会波及其他对象，必须去监督页整体调整）；
+     *  - 没有任何任务 → 新建一个只含该对象的任务，名字用「App › 界面」。
+     */
+    fun setTargetQuota(pkg: String, cls: String?, limitSec: Int?, limitCnt: Int?): Boolean {
+        if (!::taskStore.isInitialized) return false
+        val key = if (cls.isNullOrBlank()) pkg else "$pkg/$cls"
+        val own = tasks.firstOrNull { t -> t.targets.size == 1 && t.targets[0].key == key }
+        if (own != null) {
+            taskStore.upsert(
+                own.copy(rules = own.rules.copy(dayLimitSec = limitSec, dayLimitCnt = limitCnt))
+            )
+            tasks = taskStore.tasks
+            notifySuperviseChanged()
+            return true
+        }
+        val shared = tasks.firstOrNull { t -> t.targets.size > 1 && t.targets.any { it.key == key } }
+        if (shared != null) return false
+        if (limitSec == null && limitCnt == null) return true // 本来就没有任务，留空 = 不监督
+        val target = SuperviseTarget(pkg, cls)
+        taskStore.upsert(
+            SuperviseTask(
+                name = target.shortName(),
+                targets = listOf(target),
+                rules = SuperviseRules(dayLimitSec = limitSec, dayLimitCnt = limitCnt),
+            )
+        )
+        tasks = taskStore.tasks
+        notifySuperviseChanged()
+        return true
+    }
+
+    /**
+     * 监督配置变更后的统一善后：重算拦截集合 → 重写 blocked.json → 起停守护服务。
+     * 顺序不能换：先算出新的拦截集合，再下发；否则会把旧的拦截写回去。
+     */
+    private fun notifySuperviseChanged() {
+        // ★ 必须异步：tick 会做 UsageStats 全量遍历 + Shizuku 子进程，主线程调用必卡顿
+        scope.launch {
+            runCatching { SuperviseEngine.tick(appContext) }
+            runCatching { AmsController.writeRules() }
+            runCatching { QuotaService.startIfQuotaConfigured(appContext) }
+        }
+    }
+
+    /**
+     * ★ v1.32.0：旧数据一次性迁移 —— `LockRule.quotaMin/quotaCnt` → 监督任务。
+     *
+     * 旧模型把限额挂在「收藏夹的界面规则」上，导致想限时就得先锁定。
+     * 这里按包聚合（多规则取最大），额度相同的包合成一个任务，额度不同则拆开，
+     * 迁完清空 LockRule 上的字段，避免两套数据并存。
+     */
+    private fun migrateQuotasToTasks() {
+        val prefs = appContext.getSharedPreferences("quota_migrate", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("done_v2", false)) return
+        runCatching {
+            val legacy = LinkedHashMap<String, Pair<Int?, Int?>>()
+            for (r in ruleStore.rules) {
+                if (r.quotaMin == null && r.quotaCnt == null) continue
+                val cur = legacy[r.packageName]
+                val m = maxOf(cur?.first ?: 0, r.quotaMin ?: 0).takeIf { it > 0 }
+                val c = maxOf(cur?.second ?: 0, r.quotaCnt ?: 0).takeIf { it > 0 }
+                legacy[r.packageName] = m to c
+            }
+            android.util.Log.i(
+                "AppStore",
+                "TaskMigrate: rules=${ruleStore.rules.size} legacy=${legacy.size} " +
+                    "detail=" + legacy.entries.joinToString { "${it.key}=${it.value.first}/${it.value.second}" }
+            )
+            if (legacy.isNotEmpty()) {
+                val groups = legacy.entries.groupBy { it.value }
+                var i = 1
+                for ((limits, entries) in groups) {
+                    taskStore.addIfAbsent(
+                        SuperviseTask(
+                            name = if (groups.size == 1) "每日限额" else "每日限额 $i",
+                            targets = entries.map { SuperviseTarget(it.key) },
+                            rules = SuperviseRules(
+                                dayLimitSec = limits.first?.times(60),
+                                dayLimitCnt = limits.second,
+                            ),
+                        )
+                    )
+                    i++
+                }
+                ruleStore.clearAllQuotaFields()
+                rules = ruleStore.rules
+                tasks = taskStore.tasks
+                android.util.Log.i(
+                    "AppStore",
+                    "TaskMigrate: ${legacy.size} 个包 → ${groups.size} 个监督任务"
+                )
+            }
+            prefs.edit().putBoolean("done_v2", true).apply()
+        }
     }
 
     /**

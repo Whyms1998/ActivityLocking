@@ -40,7 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.activitylock.app.core.AppStore
 import com.activitylock.app.core.BlockStats
-import com.activitylock.app.core.QuotaState
+import com.activitylock.app.core.SuperviseEngine
 import com.activitylock.app.core.StreakStore
 import com.activitylock.app.ui.components.AppIcon
 import kotlinx.coroutines.Dispatchers
@@ -96,7 +96,8 @@ fun StatsScreen(onBack: () -> Unit, bottomTab: Boolean = false) {
                 )
             }
         } else {
-            val over = QuotaState.overPackages(ctx)
+            // ★ v1.32.0：超额状态改由监督判定引擎提供（含整包与单界面两种粒度）
+            val over = SuperviseEngine.blocks(ctx).map { it.pkg }.toSet()
             LazyColumn(Modifier.fillMaxSize().padding(padding)) {
                 item {
                     Column(Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {

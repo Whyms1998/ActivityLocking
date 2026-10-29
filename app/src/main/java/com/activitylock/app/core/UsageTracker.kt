@@ -9,6 +9,9 @@ import android.os.Process
 import android.provider.Settings
 import java.util.Calendar
 
+/** ★ v1.32.0：单个监督对象的当日/时段读数（秒 + 打开次数）。 */
+class TargetUsage(var sec: Long = 0L, var opens: Int = 0)
+
 /**
  * 使用时长统计：基于 UsageStatsManager 计算某 App 当日（0 点起）累计前台时间。
  * 需要"使用情况访问权限"（特殊权限，用户在系统设置里手动授予）。
@@ -108,6 +111,113 @@ object UsageTracker {
             }
         }
         return count
+    }
+
+    /**
+     * ★ v1.32.0：一次遍历统计**多个监督对象**的时长与打开次数。
+     *
+     * 为什么需要：监督任务可以同时管整包（抖音）和单界面（微信›朋友圈），
+     * 而一轮判定要算「当天」和「时段」两套读数。若按对象逐个 queryEvents，
+     * 10 个对象 × 2 个窗口 = 20 次全天遍历，3 秒一轮会明显耗电。
+     * 这里一次扫描就够：先按包名集合快速过滤（绝大多数事件属于其他 App，直接跳过），
+     * 再用 (pkg,cls) 维护前台起点，结算时同时累加「整包」与「单界面」两份读数。
+     *
+     * @param fromMs 统计起点（当天 0 点 / 时段起点）
+     * @param wholePkgs 需要整包统计的包名
+     * @param compKeys 需要单界面统计的 "pkg/cls"
+     * @param entryClsOf 整包「打开次数」的锚点（入口 Activity）；返回 null 时退化为会话数
+     */
+    /**
+     * ★ v1.32.0：该包此刻是否在前台（UsageStats 事件状态机）。
+     *
+     * 只用于「次数用完」这一种情况：正在用就让他把这一次用完，确认退出了才收尾。
+     * 查询窗口取 4 小时——更久没有任何事件的包按"不在前台"处理。
+     */
+    fun isInForeground(ctx: Context, pkg: String): Boolean {
+        val usm = ctx.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        var state = false
+        runCatching {
+            val now = System.currentTimeMillis()
+            val events = usm.queryEvents(now - 4 * 3600_000L, now)
+            val e = UsageEvents.Event()
+            while (events.hasNextEvent()) {
+                events.getNextEvent(e)
+                if (e.packageName != pkg) continue
+                when (e.eventType) {
+                    UsageEvents.Event.ACTIVITY_RESUMED -> state = true
+                    UsageEvents.Event.ACTIVITY_PAUSED,
+                    UsageEvents.Event.ACTIVITY_STOPPED -> state = false
+                }
+            }
+        }
+        return state
+    }
+
+    fun usageForAll(
+        ctx: Context,
+        fromMs: Long,
+        wholePkgs: Set<String>,
+        compKeys: Set<String>,
+    ): Map<String, TargetUsage> {
+        val out = HashMap<String, TargetUsage>()
+        if (wholePkgs.isEmpty() && compKeys.isEmpty()) return out
+        val pkgs = HashSet<String>(wholePkgs)
+        for (k in compKeys) pkgs.add(k.substringBefore('/'))
+        val usm = ctx.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        // 每个 (pkg/cls) 的前台起点；结算时同时累加整包与单界面
+        val fgStart = HashMap<String, Long>()
+        // 每包活跃的 Activity 计数：0 → 1 的跃迁才算「打开一次」。
+        // ★ 不能用「入口 Activity 的 RESUMED」当整包计数锚点：配了「点图标直达」的 App
+        //   （酷安 → 搜索页）入口会被拦截引擎拒绝，根本不会产生 RESUMED 事件，
+        //   计数会永远为 0。也不能用「单个 Activity PAUSED/STOPPED」判离开，
+        //   单 Activity 应用内部切页面同样会 PAUSED，会把一次打开误算成多次。
+        val active = HashMap<String, Int>()
+
+        fun stat(key: String) = out.getOrPut(key) { TargetUsage() }
+        fun settle(pkg: String, cls: String, endMs: Long) {
+            val ck = "$pkg/$cls"
+            val s = fgStart.remove(ck) ?: return
+            val delta = (endMs - s).coerceAtLeast(0)
+            if (delta <= 0) return
+            if (pkg in wholePkgs) stat(pkg).sec += delta
+            if (ck in compKeys) stat(ck).sec += delta
+        }
+
+        runCatching {
+            val events = usm.queryEvents(fromMs, System.currentTimeMillis())
+            val e = UsageEvents.Event()
+            while (events.hasNextEvent()) {
+                events.getNextEvent(e)
+                val pkg = e.packageName ?: continue
+                if (pkg !in pkgs) continue
+                val cls = e.className ?: ""
+                val ck = "$pkg/$cls"
+                when (e.eventType) {
+                    UsageEvents.Event.ACTIVITY_RESUMED -> {
+                        // 界面级次数：该 Activity 的每次 RESUMED 都算一次进入
+                        if (ck in compKeys) stat(ck).opens++
+                        // 整包次数：包内活跃 Activity 由 0 变 1 —— 即「从后台回到前台」
+                        val n = (active[pkg] ?: 0) + 1
+                        active[pkg] = n
+                        if (n == 1 && pkg in wholePkgs) stat(pkg).opens++
+                        if (!fgStart.containsKey(ck)) fgStart[ck] = e.timeStamp
+                    }
+                    UsageEvents.Event.ACTIVITY_PAUSED,
+                    UsageEvents.Event.ACTIVITY_STOPPED -> {
+                        settle(pkg, cls, e.timeStamp)
+                        active[pkg] = ((active[pkg] ?: 0) - 1).coerceAtLeast(0)
+                    }
+                }
+            }
+            // 仍停在前台的：算到此刻
+            val now = System.currentTimeMillis()
+            for ((k, s) in fgStart.toList()) {
+                val pkg = k.substringBefore('/')
+                if (pkg in wholePkgs) stat(pkg).sec += (now - s).coerceAtLeast(0)
+                if (k in compKeys) stat(k).sec += (now - s).coerceAtLeast(0)
+            }
+        }
+        return out
     }
 
     fun todayOpenCount(ctx: Context, pkg: String, entryCls: String?): Int {

@@ -31,34 +31,44 @@ object AmsController {
     fun writeRules() {
         runCatching {
             val ctx = AppStore.context()
-            val over = QuotaState.overPackages(ctx)
+            // ★ v1.32.0：拦截集合改由监督判定引擎给出（门禁式，每轮重算，无「超额残留」问题）。
+            //   整包对象 → 包级条目 {"p":pkg}；单界面对象 → 组件条目 {"c":"pkg/cls"}。
+            //   两种都不依赖该 App 是否在 rules 里，因此「只监督、不锁定」也能拦。
+            val blocks = SuperviseEngine.blocks(ctx)
+            val blockedPkgs = blocks.filter { it.isWholeApp }.map { it.pkg }.toSet()
+            val blockedComps = blocks.filterNot { it.isWholeApp }
+                .map { "${it.pkg}/${it.cls}" }.toSet()
             val arr = org.json.JSONArray()
             AppStore.rules
                 .filter { it.block && it.locked }
                 .forEach { r ->
+                    val comp = "${r.packageName}/${r.activityName}"
                     val redirect = when {
-                        r.packageName in over -> QUOTA_GATE_COMPONENT
+                        // 超额优先：整包或该界面被监督拦下 → 跳额度说明页
+                        r.packageName in blockedPkgs -> QUOTA_GATE_COMPONENT
+                        comp in blockedComps -> QUOTA_GATE_COMPONENT
                         else -> r.redirectUri ?: ""
                     }
                     val entry = org.json.JSONObject()
-                        .put("c", "${r.packageName}/${r.activityName}")
+                        .put("c", comp)
                         .put("r", redirect)
                     // 到期解锁：带截止时间，Watcher 过期后自动放行
                     if (r.lockUntil > 0) entry.put("u", r.lockUntil)
                     arr.put(entry)
                 }
-            // 包级超额拦截：额度用完的 App 整包拒绝（无论规则解锁与否、无论哪个界面）
-            for (pkg in over) {
+            // 监督拦截：整包与单界面两种粒度
+            for (b in blocks) {
                 arr.put(
-                    org.json.JSONObject()
-                        .put("p", pkg)
-                        .put("r", QUOTA_GATE_COMPONENT)
+                    if (b.isWholeApp) org.json.JSONObject().put("p", b.pkg).put("r", QUOTA_GATE_COMPONENT)
+                    else org.json.JSONObject().put("c", "${b.pkg}/${b.cls}").put("r", QUOTA_GATE_COMPONENT)
                 )
             }
-            // 专注会话层：会话进行中目标 App 整包静默拦截（已超额的保持额度页跳转）
+            // 专注会话层：会话进行中目标 App 整包静默拦截
+            // （已被监督拦下的包跳过——监督的说明页比静默拦截更能解释原因）
             val focus = FocusState.focusPackages(ctx)
             for (pkg in focus) {
-                if (over.contains(pkg)) continue
+                if (pkg in blockedPkgs) continue
+                if (blocks.any { it.pkg == pkg }) continue
                 arr.put(
                     org.json.JSONObject()
                         .put("p", pkg)
@@ -66,9 +76,10 @@ object AmsController {
                 )
             }
             // 到点跳转层：连续使用 N 分钟 → 拉起学习 App
-            // 已超额/专注中的包跳过（它们有更严的整包拦截，无需软引导）
+            // 已被监督拦截的包跳过（超额优先）
             for (c in AppStore.sessionCfgs) {
-                if (!c.enabled || c.pkg in over || c.pkg in focus) continue
+                if (!c.enabled || c.pkg in focus) continue
+                if (blocks.any { it.pkg == c.pkg }) continue
                 // lock 模式纯锁定无跳转：t 留空也要下发
                 val resolved = if (c.mode == "lock") "" else resolveSessionTarget(c.target) ?: continue
                 arr.put(

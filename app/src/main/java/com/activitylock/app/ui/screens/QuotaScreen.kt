@@ -1,687 +1,736 @@
 package com.activitylock.app.ui.screens
 
 import android.Manifest
+import android.app.TimePickerDialog
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Card
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.activitylock.app.core.AppStore
-import com.activitylock.app.core.LockRule
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.activitylock.app.core.AppEntry
-import com.activitylock.app.core.QuotaService
-import com.activitylock.app.core.SessionCfg
-import com.activitylock.app.core.QuotaState
+import com.activitylock.app.core.AppStore
+import com.activitylock.app.core.SuperviseEngine
+import com.activitylock.app.core.SuperviseRules
+import com.activitylock.app.core.SuperviseTarget
+import com.activitylock.app.core.SuperviseTask
+import com.activitylock.app.core.TargetUsage
 import com.activitylock.app.core.UsageTracker
-import com.activitylock.app.core.VerifyGate
 import com.activitylock.app.ui.components.AppIcon
+import com.activitylock.app.ui.components.DialogImePan
+import com.activitylock.app.ui.components.DialogImeResize
 import com.activitylock.app.ui.components.DurationField
 import com.activitylock.app.ui.components.DurationUnit
-import com.activitylock.app.ui.components.UnlockVerifyDialog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
-private fun refresh(ctx: android.content.Context) {
-    // ★ v1.30.2：限额变更（新增/移除）后先重估残留超额，再同步规则与服务——
-    //   顺序很重要：先解除 over 再 writeRules，避免把刚解除的包又写回拦截清单。
-    com.activitylock.app.core.QuotaService.reevaluateOver(ctx)
-    com.activitylock.app.core.AmsController.writeRules()
-    QuotaService.startIfQuotaConfigured(ctx)
-}
-
+/**
+ * APP 监督（★ v1.32.0 重写，替代原「每日限额」页）。
+ *
+ * 模型：任务 = 一组监督对象（整包 / 单界面）+ 一套规则 + 生效时段。
+ * 与「锁定」解耦——只监督不需要把 App 加进收藏夹，平时打开零摩擦。
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun QuotaScreen(onBack: () -> Unit) {
-    val context = LocalContext.current
-    val rules = AppStore.rules
-    // ★ v1.30.0：时长与次数两个维度并列展示，任一维度有配置的包都进列表
-    val timeQuota = QuotaState.quotaPackages(rules)
-    val cntQuota = QuotaState.quotaCntPackages(rules)
-    val quotaPkgs = timeQuota.keys + cntQuota.keys
-    val hasPermission = UsageTracker.hasPermission(context)
-    var adding by remember { mutableStateOf(false) }
-    var addingSession by remember { mutableStateOf(false) }
-    var removing by remember { mutableStateOf<String?>(null) }
-    var pendingVerifyRemove by remember { mutableStateOf<String?>(null) }
+    val ctx = LocalContext.current
+    val tasks = AppStore.tasks
+    val hasPerm = UsageTracker.hasPermission(ctx)
+    var editing by remember { mutableStateOf<SuperviseTask?>(null) }
+    var pendingDelete by remember { mutableStateOf<SuperviseTask?>(null) }
 
-    val notifPermission = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { }
-
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= 33) {
-            notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    // 读数每 5 秒刷一次（系统事件是权威源，读实时算，不依赖任何缓存）
+    var tick by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(5_000)
+            tick++
         }
+    }
+    val stats by produceState<Map<String, TargetUsage>>(emptyMap(), tasks, tick, hasPerm) {
+        value = if (!hasPerm || tasks.isEmpty()) emptyMap() else withContext(Dispatchers.IO) {
+            val targets = tasks.flatMap { it.targets }
+            runCatching {
+                UsageTracker.usageForAll(
+                    ctx,
+                    SuperviseEngine.dayStartMs(System.currentTimeMillis()),
+                    targets.filter { it.isWholeApp }.map { it.pkg }.toSet(),
+                    targets.filterNot { it.isWholeApp }.map { it.key }.toSet(),
+                )
+            }.getOrDefault(emptyMap())
+        }
+    }
+
+    val notifPerm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= 33) notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("每日限额", style = MaterialTheme.typography.titleMedium) },
+                title = { Text("APP 监督", style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                     }
                 },
                 actions = {
-                    IconButton(onClick = { adding = true }) {
-                        Icon(Icons.Default.Add, contentDescription = "添加限额")
-                    }
+                    IconButton(onClick = {
+                        editing = SuperviseTask(name = "监督任务 ${tasks.size + 1}")
+                    }) { Icon(Icons.Default.Add, contentDescription = "新建监督任务") }
                 }
             )
         }
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
-            if (!hasPermission) {
-                Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp)) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text("需要「使用情况访问权限」", style = MaterialTheme.typography.titleSmall)
-                        Spacer(Modifier.height(4.dp))
+        LazyColumn(Modifier.fillMaxSize().padding(padding)) {
+            if (!hasPerm) {
+                item { PermissionCard() }
+            }
+            if (tasks.isEmpty()) {
+                item { EmptyState() }
+            }
+            items(tasks, key = { it.id }) { task ->
+                TaskCard(
+                    task = task,
+                    stats = stats,
+                    onEdit = { editing = task },
+                    onToggle = { AppStore.setTaskEnabled(task.id, it) },
+                )
+            }
+            item { Spacer(Modifier.height(24.dp)) }
+        }
+    }
+
+    editing?.let { t ->
+        TaskEditSheet(
+            initial = t,
+            isNew = tasks.none { it.id == t.id },
+            onDismiss = { editing = null },
+            onSave = {
+                AppStore.upsertTask(it)
+                editing = null
+            },
+            onDelete = {
+                // 删除 = 解除监督，属削弱性动作：该任务下有对象正在被拦时必须先过验证
+                val blocked = SuperviseEngine.blocks(ctx).any { b ->
+                    t.targets.any { x -> x.key == b.key }
+                }
+                if (blocked) pendingDelete = t
+                else {
+                    AppStore.removeTask(t.id)
+                    editing = null
+                }
+            },
+        )
+    }
+
+    pendingDelete?.let { t ->
+        com.activitylock.app.ui.components.UnlockVerifyDialog(
+            requirement = com.activitylock.app.core.VerifyGate.bulkRequirement(ctx, AppStore.rules),
+            title = "删除监督任务验证",
+            hint = "该任务下有 App 正在被拦截，删除等于解除监督",
+            onConfirmed = {
+                AppStore.removeTask(t.id)
+                pendingDelete = null
+                editing = null
+            },
+            onDismiss = { pendingDelete = null },
+        )
+    }
+}
+
+@Composable
+private fun PermissionCard() {
+    val ctx = LocalContext.current
+    Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
+        Column(Modifier.padding(12.dp)) {
+            Text("需要「使用情况访问权限」", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "统计各 App / 界面的使用时长必须授予此权限。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            TextButton(onClick = { UsageTracker.openPermissionSettings(ctx) }) { Text("去授权") }
+        }
+    }
+}
+
+@Composable
+private fun EmptyState() {
+    Column(
+        Modifier.fillMaxWidth().padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("还没有监督任务", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "点右上角「＋」新建：选一组 App 或界面，设定每天可用多久、打开几次",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TaskCard(
+    task: SuperviseTask,
+    stats: Map<String, TargetUsage>,
+    onEdit: () -> Unit,
+    onToggle: (Boolean) -> Unit,
+) {
+    Card(
+        onClick = onEdit,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    // 单对象任务直接用对象名（如「微信 › 朋友圈」），比用户随手起的任务名更可读
+                    Text(
+                        if (task.targets.size == 1) task.targets[0].shortName() else task.name,
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    // 单对象任务：标题已经是对象名，这里再列一遍就重复了
+                    if (task.targets.size != 1) {
                         Text(
-                            "统计各 App 当日使用时长必须授予此权限。点击后在列表中找到「应用锁」并允许。",
+                            targetSummary(task),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                Switch(checked = task.enabled, onCheckedChange = onToggle)
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                ruleSummary(task),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            // 今日读数：最多两条，超额标红
+            val lines = readout(task, stats)
+            if (lines.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                for (l in lines) {
+                    Text(
+                        l.first,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (l.second) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun targetSummary(task: SuperviseTask): String {
+    if (task.targets.isEmpty()) return "未添加监督对象"
+    val names = task.targets.take(3).joinToString("、") { it.shortName() }
+    return if (task.targets.size > 3) "$names 等 ${task.targets.size} 项" else names
+}
+
+private fun ruleSummary(task: SuperviseTask): String {
+    val r = task.rules
+    val parts = ArrayList<String>()
+    if (r.forbid) parts.add("禁止使用")
+    if (r.windowLimitSec != null) parts.add("时段内 ${minLabel(r.windowLimitSec)}")
+    if (r.windowLimitCnt != null) parts.add("时段内 ${r.windowLimitCnt} 次")
+    if (r.dayLimitSec != null) parts.add("每天 ${minLabel(r.dayLimitSec)}")
+    if (r.dayLimitCnt != null) parts.add("每天 ${r.dayLimitCnt} 次")
+    if (parts.isEmpty()) return "未设置规则"
+    return parts.joinToString(" · ") + " · " + task.windowLabel()
+}
+
+private fun minLabel(sec: Int): String =
+    if (sec % 3600 == 0) "${sec / 3600} 小时" else "${sec / 60} 分钟"
+
+/** 今日读数：优先显示已超额的对象，最多两条。 */
+private fun readout(task: SuperviseTask, stats: Map<String, TargetUsage>): List<Pair<String, Boolean>> {
+    val out = ArrayList<Pair<String, Boolean>>()
+    for (t in task.targets) {
+        val st = stats[t.key] ?: TargetUsage()
+        val r = task.rules
+        val overTime = (r.dayLimitSec != null && st.sec >= r.dayLimitSec) ||
+            (r.windowLimitSec != null && st.sec >= r.windowLimitSec)
+        val overCnt = (r.dayLimitCnt != null && st.opens >= r.dayLimitCnt) ||
+            (r.windowLimitCnt != null && st.opens >= r.windowLimitCnt)
+        val over = overTime || overCnt
+        if (!over && out.size >= 2) continue
+        val bits = ArrayList<String>()
+        if (r.dayLimitSec != null || r.windowLimitSec != null) {
+            val limitSec = (r.dayLimitSec ?: r.windowLimitSec)!!.toLong()
+            bits.add("${st.sec / 60}/${limitSec / 60} 分钟")
+        }
+        if (r.dayLimitCnt != null || r.windowLimitCnt != null) {
+            val limitCnt = r.dayLimitCnt ?: r.windowLimitCnt!!
+            bits.add("${st.opens}/$limitCnt 次")
+        }
+        val prefix = if (task.targets.size == 1) "" else t.shortName() + " "
+        out.add((prefix + bits.joinToString(" · ") + if (over) " 已用完" else "") to over)
+        if (out.size >= 3) break
+    }
+    return out
+}
+
+// ---------------- 编辑面板 ----------------
+
+@Composable
+private fun TaskEditSheet(
+    initial: SuperviseTask,
+    isNew: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (SuperviseTask) -> Unit,
+    onDelete: () -> Unit,
+) {
+    val ctx = LocalContext.current
+    var name by remember { mutableStateOf(initial.name) }
+    var enabled by remember { mutableStateOf(initial.enabled) }
+    var startMin by remember { mutableStateOf(initial.windowStart) }
+    var endMin by remember { mutableStateOf(initial.windowEnd) }
+    var rules by remember { mutableStateOf(initial.rules) }
+    var targets by remember { mutableStateOf(initial.targets) }
+    var adding by remember { mutableStateOf(false) }
+
+    fun fmt(m: Int) = "%02d:%02d".format(m / 60, m % 60)
+    val canSave = name.isNotBlank() && targets.isNotEmpty() && rules.active
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            Modifier.fillMaxWidth().fillMaxHeight(0.94f),
+            color = MaterialTheme.colorScheme.surface,
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+        ) {
+            DialogImeResize()
+            Column(Modifier.fillMaxSize()) {
+                // 顶栏
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) { Text("取消") }
+                    Text(
+                        if (isNew) "新建监督任务" else "编辑监督任务",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    TextButton(enabled = canSave, onClick = {
+                        onSave(
+                            initial.copy(
+                                name = name.trim(),
+                                enabled = enabled,
+                                windowStart = startMin,
+                                windowEnd = endMin,
+                                rules = rules,
+                                targets = targets,
+                            )
+                        )
+                    }) { Text("保存") }
+                }
+                HorizontalDivider()
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("任务名称") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("任务开关", Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                        Switch(checked = enabled, onCheckedChange = { enabled = it })
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                    // 生效时段
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("监督时间范围", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                if (startMin == 0 && endMin == 1439) "全天" else "只在此时段内监督",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        TextButton(onClick = {
+                            TimePickerDialog(ctx, { _, h, m -> startMin = h * 60 + m }, startMin / 60, startMin % 60, true).show()
+                        }) { Text(fmt(startMin)) }
+                        Text("–", style = MaterialTheme.typography.bodySmall)
+                        TextButton(onClick = {
+                            TimePickerDialog(ctx, { _, h, m -> endMin = h * 60 + m }, endMin / 60, endMin % 60, true).show()
+                        }) { Text(fmt(endMin)) }
+                    }
+                    HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                    // 监督对象
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "监督对象（${targets.size}）",
+                            style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { adding = true }) { Text("＋ 添加") }
+                    }
+                    if (targets.isEmpty()) {
+                        Text(
+                            "选 App 可整个应用监督，也可以只监督某个界面",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        TextButton(onClick = { UsageTracker.openPermissionSettings(context) }) {
-                            Text("去授权")
-                        }
                     }
-                }
-            } else {
-                Text(
-                    "亮屏每分钟统计一次；超额后当天拦截，次日 0 点重置。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
-            }
-
-            // 到点跳转：打开触发 App 连续 N 分钟后，自动打开学习 App（计时在系统级拦截器，切走即清零）
-            Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp)) {
-                Column(Modifier.padding(12.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("到点跳转", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                        TextButton(onClick = { addingSession = true }) { Text("＋ 新增") }
-                    }
-                    AppStore.sessionCfgs.forEach { c ->
+                    for (t in targets) {
                         Row(
-                            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            Modifier.fillMaxWidth().padding(vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            AppIcon(c.pkg, 30.dp)
-                            if (c.mode == "lock") {
-                                Text("  →  🔒", style = MaterialTheme.typography.labelMedium)
-                            } else {
-                                Text("  →  ", style = MaterialTheme.typography.labelMedium)
-                                if (c.target.contains("://")) {
-                                    Text("\uD83D\uDD17", style = MaterialTheme.typography.titleMedium)
-                                } else {
-                                    AppIcon(c.target.substringBefore('/'), 30.dp)
-                                }
-                            }
+                            if (t.isWholeApp) AppIcon(t.pkg, 24.dp) else Spacer(Modifier.width(24.dp))
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                if (c.mode == "lock") {
-                                    // ★ v1.24.9：时长读数统一（180 分钟 → 「3 小时」）
-                                    "打开「" + (AppStore.findApp(c.pkg)?.label ?: c.pkg.substringAfterLast('.')) +
-                                        "」连续 " + relockDelayLabel(c.limitMin * 60) + " → 当日锁定（次日恢复）" + graceSuffix(c.graceSec)
-                                } else {
-                                    "打开「" + (AppStore.findApp(c.pkg)?.label ?: c.pkg.substringAfterLast('.')) +
-                                        "」" + relockDelayLabel(c.limitMin * 60) + "后自动打开「" + sessionTargetLabel(c.target) + "」" +
-                                        // ★ 规范 §1：原来拼的是 "· 当日 N 次后锁定"（中点另起一条规则）→ 用逗号承接
-                                        (if (c.maxJumps > 0) "，当日 " + c.maxJumps + " 次后锁定" else "") +
-                                        graceSuffix(c.graceSec)
-                                },
-                                style = MaterialTheme.typography.labelMedium,
+                                t.shortName(),
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f)
                             )
-                            Switch(
-                                checked = c.enabled,
-                                onCheckedChange = { on ->
-                                    AppStore.setSessionEnabled(c.pkg, on)
-                                    refresh(context)
-                                }
-                            )
-                            IconButton(onClick = {
-                                AppStore.removeSession(c.pkg)
-                                refresh(context)
-                            }) {
-                                Icon(Icons.Default.Delete, contentDescription = "删除")
+                            IconButton(onClick = { targets = targets.filterNot { x -> x.key == t.key } }) {
+                                Icon(Icons.Default.Close, contentDescription = "移除", modifier = Modifier.width(18.dp))
                             }
                         }
                     }
-                }
-            }
-
-            if (quotaPkgs.isEmpty()) {
-                Column(
-                    Modifier.fillMaxWidth().weight(1f).padding(32.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text("还没有限额", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "点右上角「＋」为 App 设置每日可用时长或打开次数上限",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                    // 监督规则
+                    Text("监督规则", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(2.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = rules.forbid, onCheckedChange = {
+                            rules = rules.copy(forbid = it)
+                        })
+                        Text("禁止使用", style = MaterialTheme.typography.bodyLarge)
+                    }
+                    DurationRuleRow(
+                        title = "当前时间段，累计",
+                        sec = rules.windowLimitSec,
+                        onChange = { rules = rules.copy(windowLimitSec = it) },
                     )
-                }
-            } else {
-                LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
-                    items(quotaPkgs.sorted(), key = { it }) { pkg ->
-                        val min = timeQuota[pkg]
-                        val cnt = cntQuota[pkg]
-                        val used = if (hasPermission) UsageTracker.todayMinutes(context, pkg) else 0
-                        // ★ v1.31.0：次数口径 = 打开次数（系统事件统计，与 QuotaService 一致）
-                        val entryCls = AppStore.findApp(pkg)?.activities?.firstOrNull { it.isLauncher }?.cls
-                        val cntUsed = if (hasPermission) UsageTracker.todayOpenCount(context, pkg, entryCls) else 0
-                        val overTime = min != null && used >= min
-                        val overCnt = cnt != null && cntUsed >= cnt
-                        val label = AppStore.findApp(pkg)?.label ?: pkg.substringAfterLast('.')
-                        Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp)) {
-                            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                AppIcon(pkg, 42.dp)
-                                Spacer(Modifier.width(12.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text(label, style = MaterialTheme.typography.titleSmall)
-                                    Spacer(Modifier.height(4.dp))
-                                    // ★ v1.30.0：时长 / 次数两个维度各占一行（都配置时），超额标红
-                                    if (min != null) {
-                                        Text(
-                                            if (overTime) "今日已用 $used/$min 分钟（已超额）"
-                                            else "今日已用 $used/$min 分钟",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = if (overTime) MaterialTheme.colorScheme.error
-                                            else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    if (cnt != null) {
-                                        Text(
-                                            if (overCnt) "今日已打开 $cntUsed/$cnt 次（已超额）"
-                                            else "今日已打开 $cntUsed/$cnt 次",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = if (overCnt) MaterialTheme.colorScheme.error
-                                            else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    if (min != null) {
-                                        Spacer(Modifier.height(4.dp))
-                                        LinearProgressIndicator(
-                                            progress = {
-                                                (used.toFloat() / min.toFloat()).coerceIn(0f, 1f)
-                                            },
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-                                }
-                                IconButton(onClick = { removing = pkg }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "移除限额")
-                                }
-                            }
-                        }
+                    CountRuleRow(
+                        title = "当前时间段，使用",
+                        value = rules.windowLimitCnt,
+                        onChange = { rules = rules.copy(windowLimitCnt = it) },
+                    )
+                    DurationRuleRow(
+                        title = "当天，累计",
+                        sec = rules.dayLimitSec,
+                        onChange = { rules = rules.copy(dayLimitSec = it) },
+                    )
+                    CountRuleRow(
+                        title = "当天，使用",
+                        value = rules.dayLimitCnt,
+                        onChange = { rules = rules.copy(dayLimitCnt = it) },
+                    )
+                    if (!rules.active) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "至少设置一条规则才能保存",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
                     }
-                    item { Spacer(Modifier.height(24.dp)) }
+                    Spacer(Modifier.height(20.dp))
+                    if (!isNew) {
+                        HorizontalDivider()
+                        TextButton(
+                            onClick = onDelete,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("删除任务", color = MaterialTheme.colorScheme.error) }
+                    }
+                    Spacer(Modifier.height(28.dp))
                 }
             }
         }
     }
 
     if (adding) {
-        val candidates = rules.map { it.packageName }.distinct()
-            .filter { it !in quotaPkgs }
-        QuotaAddDialog(
-            candidates = candidates,
-            onConfirm = { pkg, min, cnt ->
-                for (r in rules.filter { it.packageName == pkg }) {
-                    AppStore.updateQuota(r.packageName, r.activityName, min)
-                    AppStore.updateQuotaCnt(r.packageName, r.activityName, cnt)
-                }
-                refresh(context)
+        AddTargetDialog(
+            existing = targets.map { it.key }.toSet(),
+            onPick = {
+                if (targets.none { x -> x.key == it.key }) targets = targets + it
                 adding = false
             },
-            onDismiss = { adding = false }
-        )
-    }
-
-    if (addingSession) {
-        SessionAddDialog(
-            onConfirm = { trigger, target, min, maxJ, mode, grace ->
-                AppStore.upsertSession(
-                    SessionCfg(
-                        pkg = trigger, target = target, limitMin = min,
-                        maxJumps = maxJ, mode = mode, graceSec = grace
-                    )
-                )
-                refresh(context)
-                addingSession = false
-            },
-            onDismiss = { addingSession = false }
-        )
-    }
-
-    removing?.let { pkg ->
-        val over = pkg in QuotaState.overPackages(context)
-        AlertDialog(
-            onDismissRequest = { removing = null },
-            title = { Text("移除每日限额？") },
-            text = { Text(
-                if (over) "「${AppStore.findApp(pkg)?.label ?: pkg}」今日已超额。移除限额将立刻恢复该 App 的使用，需要先通过验证。"
-                else "「${AppStore.findApp(pkg)?.label ?: pkg}」将不再限制每日使用时长与打开次数。"
-            ) },
-            confirmButton = {
-                TextButton(onClick = {
-                    removing = null
-                    if (over) pendingVerifyRemove = pkg else {
-                        clearPkgQuota(rules, pkg, context)
-                        refresh(context)
-                    }
-                }) { Text(if (over) "验证并移除" else "移除") }
-            },
-            dismissButton = { TextButton(onClick = { removing = null }) { Text("取消") } }
-        )
-    }
-
-    pendingVerifyRemove?.let { pkg ->
-        UnlockVerifyDialog(
-            requirement = VerifyGate.bulkRequirement(context, AppStore.rules),
-            title = "移除限额验证",
-            hint = "该 App 今日已超额，移除限额等于提前解锁它",
-            onConfirmed = {
-                pendingVerifyRemove = null
-                clearPkgQuota(rules, pkg, context)
-                QuotaState.clearOver(context, pkg)
-                refresh(context)
-            },
-            onDismiss = { pendingVerifyRemove = null }
+            onDismiss = { adding = false },
         )
     }
 }
 
-/** ★ v1.30.0：移除某包的全部限额（时长 + 次数）并清掉次数计数。 */
-private fun clearPkgQuota(rules: List<LockRule>, pkg: String, ctx: android.content.Context) {
-    for (r in rules.filter { it.packageName == pkg }) {
-        AppStore.updateQuota(r.packageName, r.activityName, null)
-        AppStore.updateQuotaCnt(r.packageName, r.activityName, null)
+/** 时长型规则行：勾选启用，值默认 1 小时。 */
+@Composable
+private fun DurationRuleRow(title: String, sec: Int?, onChange: (Int?) -> Unit) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = sec != null, onCheckedChange = {
+                onChange(if (it) 3600 else null)
+            })
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+        }
+        if (sec != null) {
+            DurationField(
+                seconds = sec,
+                onChange = { onChange(it.coerceAtLeast(1)) },
+                units = listOf(DurationUnit.MIN, DurationUnit.HOUR),
+                showEquivalent = false,
+                modifier = Modifier.padding(start = 44.dp, bottom = 8.dp),
+            )
+        }
     }
 }
+
+/** 次数型规则行：勾选启用，默认 60 次。 */
+@Composable
+private fun CountRuleRow(title: String, value: Int?, onChange: (Int?) -> Unit) {
+    var text by remember(value) { mutableStateOf(value?.toString() ?: "") }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = value != null, onCheckedChange = {
+            if (it) {
+                text = (value ?: 60).toString()
+                onChange(value ?: 60)
+            } else {
+                text = ""
+                onChange(null)
+            }
+        })
+        Text(title, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        if (value != null) {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { s ->
+                    text = s.filter { c -> c.isDigit() }.take(3)
+                    text.toIntOrNull()?.let { onChange(it) }
+                },
+                singleLine = true,
+                suffix = { Text("次") },
+                isError = text.isNotBlank() && (text.toIntOrNull() ?: 0) !in 1..999,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Number,
+                    imeAction = ImeAction.Done
+                ),
+                modifier = Modifier.width(112.dp)
+            )
+        }
+    }
+}
+
+// ---------------- 添加监督对象 ----------------
 
 @Composable
-private fun QuotaAddDialog(
-    candidates: List<String>,
-    onConfirm: (String, Int, Int?) -> Unit,
+private fun AddTargetDialog(
+    existing: Set<String>,
+    onPick: (SuperviseTarget) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var selected by remember { mutableStateOf(candidates.firstOrNull() ?: "") }
-    // ★ v1.24.9：分钟数改为统一的 [DurationField]（分钟 / 小时，无「秒」档 ——
-    //   限额按分钟统计，放开秒会让用户填出一个存不进去的值）。
-    //   单位只留这两档，所以秒数永远是 60 的整数倍，落盘不做任何取整。
-    var limitSec by remember { mutableStateOf(20 * 60) }
-    val limitMin = limitSec / 60
-    val overDay = limitMin > 1440
-    // ★ v1.31.0：每日打开次数（可留空 = 不限；计数 = 系统事件统计的入口界面打开数）
-    var cntText by remember { mutableStateOf("") }
-    val cntVal = cntText.toIntOrNull()
-    val cntInvalid = cntText.isNotBlank() && (cntVal == null || cntVal !in 1..999)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("添加限额") },
-        text = {
-            // ★ 分钟数输入框会唤起键盘 → 让 Dialog window 随键盘收缩
-            com.activitylock.app.ui.components.DialogImePan()
-            Column {
-                if (candidates.isEmpty()) {
-                    Text("所有已锁规则的 App 都已配置限额。")
-                }
-                candidates.forEach { pkg ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        androidx.compose.material3.RadioButton(
-                            selected = selected == pkg,
-                            onClick = { selected = pkg }
-                        )
-                        AppIcon(pkg, 28.dp)
-                        Spacer(Modifier.width(8.dp))
-                        Text(AppStore.findApp(pkg)?.label ?: pkg)
+    var query by remember { mutableStateOf("") }
+    var app by remember { mutableStateOf<AppEntry?>(null) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface
+        ) {
+            DialogImePan()
+            Column(Modifier.padding(14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (app != null) {
+                        TextButton(onClick = { app = null }) { Text("‹ 返回") }
                     }
-                }
-                Spacer(Modifier.height(8.dp))
-                DurationField(
-                    seconds = limitSec,
-                    onChange = { limitSec = it },
-                    units = listOf(DurationUnit.MIN, DurationUnit.HOUR),
-                    equivalent = { sec ->
-                        if (sec <= 0) "请填写额度" else "每天可用 " + relockDelayLabel(sec)
-                    },
-                )
-                Spacer(Modifier.height(4.dp))
-                if (overDay) {
                     Text(
-                        // ★ 「每日」限额的天然上限就是一天 —— 定义边界明说，不静默钳制
-                        "超出上限：每天最多 24 小时（1440 分钟）",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error
+                        app?.label ?: "选择应用",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f)
                     )
+                    TextButton(onClick = onDismiss) { Text("关闭") }
                 }
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = cntText,
-                    onValueChange = { cntText = it.filter { c -> c.isDigit() }.take(3) },
-                    label = { Text("每日打开次数（留空不限）") },
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
-                        imeAction = androidx.compose.ui.text.input.ImeAction.Done
-                    ),
-                    singleLine = true,
-                    isError = cntInvalid,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = selected.isNotBlank() && limitMin in 1..1440 && !cntInvalid,
-                onClick = { onConfirm(selected, limitMin, cntVal?.takeIf { it in 1..999 }) }
-            ) { Text("保存") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
-    )
-}
-
-private fun graceSuffix(sec: Int): String =
-    // ★ 规范 §1：原来返回 "· 宽限 N 秒"（中点另起一条规则）→ 逗号承接更顺
-    // ★ v1.24.9：可自由填时长后统一走 relockDelayLabel（3600 读作「1 小时」而非「3600 秒」）
-    if (sec == 120) "" else "，宽限 " + relockDelayLabel(sec)
-
-private fun sessionTargetLabel(target: String): String {
-    val t = target.trim()
-    return when {
-        t.contains("://") -> "深链 " + t.take(16) + "…"
-        t.contains("/") ->
-            (AppStore.findApp(t.substringBefore('/'))?.label
-                ?: t.substringBefore('/').substringAfterLast('.'))
-        else -> AppStore.findApp(t)?.label ?: t.substringAfterLast('.')
-    }
-}
-
-@Composable
-private fun SessionAddDialog(
-    onConfirm: (String, String, Int, Int, String, Int) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var query1 by remember { mutableStateOf("") }
-    var query2 by remember { mutableStateOf("") }
-    var trigger by remember { mutableStateOf<String?>(null) }
-    var target by remember { mutableStateOf<String?>(null) }
-    // ★ v1.24.9：两个「时长」都改秒存储 + 统一输入组件（分钟/小时、秒/分钟/小时）
-    var limitSec by remember { mutableStateOf(60) }     // 连续使用：默认 1 分钟
-    var graceSec by remember { mutableStateOf(120) }     // 离开宽限期：默认 120 秒
-    var maxJumps by remember { mutableStateOf(3) }
-    var customJumps by remember { mutableStateOf(false) }
-    var showCustomJumpsDialog by remember { mutableStateOf(false) }
-    var customJumpsText by remember { mutableStateOf("") }
-    var mode by remember { mutableStateOf("jump") }
-
-    fun candidates(q: String, exclude: String?): List<AppEntry> =
-        AppStore.apps
-            .filter {
-                (it.label.contains(q, true) || it.packageName.contains(q, true)) &&
-                    it.packageName != exclude
-            }
-            .sortedBy { it.label }
-            .take(40)
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("新增到点跳转") },
-        text = {
-            // ★ 目标包名等输入框会唤起键盘 → 让 Dialog window 随键盘收缩
-            com.activitylock.app.ui.components.DialogImePan()
-            // 内容整体可滚动（PickerList 内部自带滚动，超出屏幕的部分靠这里拖动）
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text("刷满后怎么处理", style = MaterialTheme.typography.labelMedium)
-                Row {
-                    FilterChip(
-                        selected = mode == "jump",
-                        onClick = { mode = "jump" },
-                        label = { Text("跳去学习 App") }
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    FilterChip(
-                        selected = mode == "lock",
-                        onClick = { mode = "lock" },
-                        label = { Text("直接锁定") }
-                    )
-                }
-                Spacer(Modifier.height(4.dp))
-                Text("触发 App（要限制刷的）", style = MaterialTheme.typography.labelMedium)
-                Spacer(Modifier.height(4.dp))
-                OutlinedTextField(
-                    value = query1,
-                    onValueChange = { query1 = it },
-                    placeholder = { Text("搜索 App") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                PickerList(candidates(query1, target), trigger) { trigger = it }
-                if (mode == "jump") {
-                    Spacer(Modifier.height(8.dp))
-                    Text("跳转目标（学习去向）", style = MaterialTheme.typography.labelMedium)
-                    Spacer(Modifier.height(4.dp))
+                if (app == null) {
                     OutlinedTextField(
-                        value = query2,
-                        onValueChange = { query2 = it },
-                        placeholder = { Text("搜索 App") },
+                        value = query,
+                        onValueChange = { query = it },
+                        placeholder = { Text("搜索应用或包名") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    PickerList(candidates(query2, trigger), target) { target = it }
-                }
-                Spacer(Modifier.height(8.dp))
-                // ★ v1.24.9：原来「连续使用（分钟）/ 离开宽限期（秒）」两个写死单位的
-                //   输入框（还各自带一套范围文案）统一为 [DurationField]，
-                //   秒 / 分钟 / 小时自由选，不再有范围限制。
-                Text("连续使用多久算刷满", style = MaterialTheme.typography.labelMedium)
-                DurationField(
-                    seconds = limitSec,
-                    onChange = { limitSec = it },
-                    units = listOf(DurationUnit.MIN, DurationUnit.HOUR),
-                    equivalent = { sec ->
-                        if (sec <= 0) "请填写时长" else "连续使用满 " + relockDelayLabel(sec)
-                    },
-                )
-                Spacer(Modifier.height(10.dp))
-                Text("离开宽限期", style = MaterialTheme.typography.labelMedium)
-                DurationField(
-                    seconds = graceSec,
-                    onChange = { graceSec = it },
-                    equivalent = { sec ->
-                        if (sec <= 0) "切出即重新计时"
-                        else "切出 " + relockDelayLabel(sec) + " 内回来接着算"
-                    },
-                )
-                if (mode == "jump") {
-                    Spacer(Modifier.height(8.dp))
-                    Text("当日第 N 次跳转后锁定该 App（次日恢复）", style = MaterialTheme.typography.labelMedium)
-                    Spacer(Modifier.height(4.dp))
-                    Row(
-                        Modifier.horizontalScroll(rememberScrollState()),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // ★ v1.24.8（用户 2026-10-13）：预设里的「3 次」改成「自定义次数」。
-                        //   原来 listOf(0,1,3) 里硬塞了一个 3，覆盖不了用户真正想要的数
-                        //   （比如 5 次、10 次）。现在预设只留两个语义明确的档
-                        //   （不锁定 / 1 次），其余全部走「自定义」。
-                        listOf(0 to "不锁定", 1 to "1 次").forEach { (n, label) ->
-                            FilterChip(
-                                selected = !customJumps && maxJumps == n,
-                                onClick = {
-                                    maxJumps = n
-                                    customJumps = false
-                                },
-                                label = { Text(label, maxLines = 1) }
-                            )
-                            Spacer(Modifier.width(4.dp))
+                    Spacer(Modifier.height(6.dp))
+                    // ★ 不能 take(N)：按 label 排序后中文 App 全在末尾，截断会让它们永远选不到
+                    //   （真机复现：滚动到底也找不到「酷安」）。LazyColumn 本来就按需渲染。
+                    val list = AppStore.apps.asSequence()
+                        .filter {
+                            query.isBlank() ||
+                                it.label.contains(query, true) ||
+                                it.packageName.contains(query, true)
                         }
-                        FilterChip(
-                            selected = customJumps,
-                            onClick = {
-                                customJumpsText = if (customJumps) maxJumps.toString() else ""
-                                showCustomJumpsDialog = true
-                            },
-                            label = {
-                                Text(if (customJumps) "自定义 " + maxJumps + " 次" else "自定义")
-                            }
+                        .sortedBy { it.label }
+                        .toList()
+                    if (list.isEmpty()) {
+                        Text(
+                            AppStore.appsLoading.let { if (it) "正在读取应用列表…" else "没有匹配的应用" },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 12.dp)
                         )
                     }
-                } else {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "锁定后当日无法打开，次日 0 点恢复；也可在 app 内通过验证后关闭本规则提前解锁。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                // ★ v1.24.9：连续使用至少 1 分钟（分钟粒度），宽限期任意（0 = 切出即清零）
-                enabled = trigger != null && (mode == "lock" || target != null) &&
-                    limitSec >= 60 && maxJumps in 0..99 && graceSec >= 0,
-                onClick = {
-                    onConfirm(
-                        trigger!!, target ?: "", limitSec / 60,
-                        maxJumps, mode, graceSec
-                    )
-                }
-            ) { Text("保存") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
-    )
-    if (showCustomJumpsDialog) {
-        AlertDialog(
-            onDismissRequest = { showCustomJumpsDialog = false },
-            title = { Text("自定义锁定次数") },
-            text = {
-                // ★ 次数输入框会唤起键盘 → 让 Dialog window 随键盘收缩
-                com.activitylock.app.ui.components.DialogImePan()
-                Column {
-                    Text(
-                        "当日第 N 次跳转后锁定该 App",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = customJumpsText,
-                    onValueChange = { customJumpsText = it.filter { c -> c.isDigit() }.take(2) },
-                    label = { Text("次数") },
-                    singleLine = true,
-                    // ★ v1.24.7：与上面「每日限额」同一套口径 —— 按钮禁用要说理由。
-                    // ★ v1.29.1：删掉常驻的「范围 1 – 99 次」（输入被 take(2) 限死，本来也越不了界）。
-                    isError = (customJumpsText.toIntOrNull() ?: 0) !in 1..99,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = (customJumpsText.toIntOrNull() ?: 0) in 1..99,
-                    onClick = {
-                        maxJumps = customJumpsText.toInt()
-                        customJumps = true
-                        showCustomJumpsDialog = false
+                    LazyColumn(Modifier.heightIn(max = 380.dp)) {
+                        items(list, key = { it.packageName }) { a ->
+                            Row(
+                                Modifier.fillMaxWidth()
+                                    .clickable { app = a }
+                                    .padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                AppIcon(a.packageName, 30.dp)
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    a.label,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (existing.contains(a.packageName)) {
+                                    Text(
+                                        "整包已加",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
                     }
-                ) { Text("确定") }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    showCustomJumpsDialog = false
-                    if (!customJumps) maxJumps = 3
-                }) { Text("取消") }
-            }
-        )
-    }
-}
-
-@Composable
-private fun PickerList(
-    pkgs: List<AppEntry>,
-    selected: String?,
-    onSelect: (String) -> Unit,
-) {
-    Column(
-        Modifier
-            .heightIn(max = 140.dp)
-            .verticalScroll(rememberScrollState())
-    ) {
-        if (pkgs.isEmpty()) {
-            Text(
-                "没有匹配的应用",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(vertical = 8.dp)
-            )
-        }
-        pkgs.forEach { app ->
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable { onSelect(app.packageName) },
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                RadioButton(
-                    selected = selected == app.packageName,
-                    onClick = { onSelect(app.packageName) }
-                )
-                AppIcon(app.packageName, 26.dp)
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    app.label,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                )
+                } else {
+                    val a = app!!
+                    Text(
+                        "只监督某个界面时，其他界面（如聊天）不受影响",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    LazyColumn(Modifier.heightIn(max = 380.dp)) {
+                        item {
+                            Row(
+                                Modifier.fillMaxWidth()
+                                    .clickable {
+                                        onPick(SuperviseTarget(a.packageName))
+                                    }
+                                    .padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                AppIcon(a.packageName, 30.dp)
+                                Spacer(Modifier.width(10.dp))
+                                Column {
+                                    Text("整个应用", style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        "该 App 的所有界面一起计入额度",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            HorizontalDivider()
+                        }
+                        items(a.activities, key = { it.cls }) { act ->
+                            Row(
+                                Modifier.fillMaxWidth()
+                                    .clickable {
+                                        onPick(SuperviseTarget(a.packageName, act.cls))
+                                    }
+                                    .padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        act.name,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        if (act.isLauncher) "入口界面 · 选它等于整包监督"
+                                        else act.cls.substringAfterLast('.'),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

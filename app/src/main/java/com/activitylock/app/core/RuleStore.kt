@@ -232,25 +232,12 @@ class RuleStore(filesDir: File) {
         save()
     }
 
-    /** 设置单条规则的每日限额（分钟）。min=null 表示不限额。 */
+    /** ★ v1.32.0：限额已迁出到独立监督任务（SuperviseTask），清空旧字段避免双写。 */
     @Synchronized
-    fun updateQuota(pkg: String, cls: String, min: Int?) {
-        _rules.value = _rules.value.map {
-            if (it.packageName == pkg && it.activityName == cls) it.copy(
-                quotaMin = min?.coerceIn(1, 1440)
-            ) else it
-        }
+    fun clearAllQuotaFields() {
+        if (_rules.value.none { it.quotaMin != null || it.quotaCnt != null }) return
+        _rules.value = _rules.value.map { it.copy(quotaMin = null, quotaCnt = null) }
         save()
     }
 
-    /** ★ v1.30.0：设置单条规则的每日打开次数上限。cnt=null 表示不限次数。上限 999（对齐全局次数口径）。 */
-    @Synchronized
-    fun updateQuotaCnt(pkg: String, cls: String, cnt: Int?) {
-        _rules.value = _rules.value.map {
-            if (it.packageName == pkg && it.activityName == cls) it.copy(
-                quotaCnt = cnt?.coerceIn(1, 999)
-            ) else it
-        }
-        save()
-    }
 }
