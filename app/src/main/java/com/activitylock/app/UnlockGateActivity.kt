@@ -3,6 +3,7 @@ package com.activitylock.app
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -48,6 +49,8 @@ class UnlockGateActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // ★ v1.33.2：与 QuotaGateActivity 同因——不 edge-to-edge 时状态栏透出 dim 壁纸成黑条
+        enableEdgeToEdge()
         AppStore.ensureInit(applicationContext)
         val requirement = if (VerifyGate.outsideUnlockWindow(applicationContext))
             VerifyGate.Requirement("window_blocked", 0, emptyList())

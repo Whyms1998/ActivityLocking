@@ -126,6 +126,11 @@ class QuotaService : Service() {
         if (blocks.isEmpty()) return
         val now = System.currentTimeMillis()
         for (b in blocks) {
+            // ★ v1.33.2：**不在前台就什么都不做**。旧版只要快照里有超额对象就
+            //   每 30 秒 force-stop + 弹额度页一次（服务重建还会立即再弹）——
+            //   用户在桌面没开这个 App 也会被额度页反复盖脸（真机实锤）。
+            //   被拦对象的入口由 watcher 组件规则守着：点图标 → 拦下 → 弹额度页。
+            if (!UsageTracker.isInForeground(this, b.pkg)) continue
             when (b.reason) {
                 // 现在就该停：整包结束进程（界面级只盖额度页，见下）
                 "forbid", "window_sec", "day_sec" -> {
@@ -139,7 +144,7 @@ class QuotaService : Service() {
                 // 但一旦确认已离开前台就结束进程，堵住「从最近任务切回还能继续用」的绕过。
                 // 界面级对象离开后组件拦截已生效，无需额外动作。
                 "window_cnt", "day_cnt" -> {
-                    if (b.isWholeApp && !UsageTracker.isInForeground(this, b.pkg)) {
+                    if (b.isWholeApp) {
                         killIfDue(b.pkg, now, showGate = false)
                     }
                 }

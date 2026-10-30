@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import com.activitylock.app.core.AmnestyStore
 import com.activitylock.app.core.AmsController
 import com.activitylock.app.core.AppStore
@@ -36,6 +37,8 @@ class AmnestyApplyActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // ★ v1.33.2：与 QuotaGateActivity 同因——不 edge-to-edge 时状态栏透出 dim 壁纸成黑条
+        enableEdgeToEdge()
         AppStore.ensureInit(applicationContext)
 
         val ctx = applicationContext

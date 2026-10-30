@@ -3,6 +3,7 @@ package com.activitylock.app
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -44,6 +45,10 @@ class QuotaGateActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // ★ v1.33.2：窗口是 translucent+transparent，不做 edge-to-edge 时内容从状态栏下方
+        //   才开始，透明状态栏透出被 dim 压暗的壁纸 = 浅色模式下顶部一条黑带（真机截图确认）。
+        //   开启后背景 Surface 铺到状态栏底下，图标颜色自动跟随系统昼夜。
+        enableEdgeToEdge()
         AppStore.ensureInit(applicationContext)
         val blocks = SuperviseEngine.blocks(this)
         // watcher 新版会把命中的包名放进 extra（见 WatcherMain.buildTargetIntent）；
