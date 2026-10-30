@@ -32,8 +32,42 @@ object AmsController {
      * 把当前生效的拦截规则同步给常驻 Watcher（App 写文件，shell 读文件）。
      * 格式：[{"c":"包名/类名","r":"跳转深链（可为空串）"}]
      * 已超额 App 的跳转目标替换为额度提示页（点图标能看到"额度用完"而不是没反应）。
+     *
+     * ★ v1.34.0 防抖收口：调用方遍布 UI 点击（FavoritesScreen 等 30 处），
+     *   原实现每次都在调用线程同步「组装 JSON + writeText」——收藏夹条目一多，
+     *   点击可感知卡顿（代码分析报告 P0 #1/#2）。
+     *   现在只置脏标记 + 向单线程 executor 排一次队，300ms 窗口内的连续调用
+     *   合并为一次写盘；watcher 本就 2 秒轮询，300ms 延迟无感。
+     *   半截文件风险不变：writeText 非原子，但 watcher 侧 v1.29.0 起
+     *   「解析失败不记缓存、下一拍重试」，下一拍文件必然已写完。
      */
     fun writeRules() {
+        rulesDirty = true
+        if (rulesScheduled) return
+        rulesScheduled = true
+        rulesExec.submit {
+            try {
+                Thread.sleep(DEBOUNCE_MS)
+            } catch (_: InterruptedException) {
+                return@submit
+            }
+            rulesScheduled = false
+            if (!rulesDirty) return@submit
+            rulesDirty = false
+            writeRulesNow()
+        }
+    }
+
+    private val rulesExec = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "rules-writer")
+    }
+    @Volatile private var rulesDirty = false
+    @Volatile private var rulesScheduled = false
+
+    /** 防抖窗口：连续配置变更合并为一次写盘。 */
+    private const val DEBOUNCE_MS = 300L
+
+    private fun writeRulesNow() {
         runCatching {
             val ctx = AppStore.context()
             // ★ v1.32.0：拦截集合改由监督判定引擎给出（门禁式，每轮重算，无「超额残留」问题）。
@@ -111,7 +145,7 @@ object AmsController {
             val f = rulesFile()
             f.parentFile?.mkdirs()
             f.writeText(arr.toString())
-        }
+        }.onFailure { Log.w("AmsController", "writeRules failed", it) }
     }
 
     /** 到点跳转目标解析：包名 → 启动组件（watcher 查不了 PM，App 侧解析好）；深链/组件名原样。 */

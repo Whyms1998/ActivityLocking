@@ -20,7 +20,14 @@ package com.activitylock.app.core
  *   ② 新增独立**心跳文件**（每 60 秒写一次时间戳）。真机实测：watcher 进程活着、
  *      日志却在某个时刻彻底停写（tick 卡死），拦截还在用旧规则跑，表现为
  *      「改了设置永不生效且毫无提示」。App 侧看门狗据此重启它。
+ *
+ * - 25 → 26（v1.34.0）：到点跳转「当日状态」落盘（/data/local/tmp/al_session_state.json）。
+ *   SESSION_JUMPS（当日已跳转次数）与 SESSION_EXHAUSTED（当日已收走）原本纯内存，
+ *   watcher 进程被杀重建后计数归零、「当日收走」失效——当天可无限重刷。
+ *   现在状态变更即标脏、每 20 秒随统计一起落盘，重启后 loadSessionState() 恢复
+ *   （跨天自动丢弃）。瞬时态（SESSION_ACC / LASTJUMP / LEAVE）不落盘，
+ *   它们基于 elapsedRealtime，跨进程没有意义。
  */
 object WatcherVersion {
-    const val VERSION = 25
+    const val VERSION = 26
 }

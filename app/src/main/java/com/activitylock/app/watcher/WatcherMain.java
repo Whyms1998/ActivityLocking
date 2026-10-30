@@ -214,6 +214,75 @@ public class WatcherMain {
     static volatile String STATS_DATE = "";
     static volatile boolean STATS_DIRTY = false;
 
+    static final String SESSION_STATE_PATH = "/data/local/tmp/al_session_state.json";
+    static volatile boolean SESSION_STATE_DIRTY = false;
+
+    /**
+     * ★ v26：到点跳转的「当日状态」落盘。
+     *
+     * 背景（代码分析报告 P0 #3）：SESSION_JUMPS（当日已跳转次数）与
+     * SESSION_EXHAUSTED（当日已收走）原本纯内存——watcher 进程被杀重建后
+     * 计数归零、「当日收走」失效，用户当天可无限重刷。这正是「每日 N 次后
+     * 锁定」承诺被进程重启静默撕毁的漏洞。
+     *
+     * 只落盘按天纪元的两项；SESSION_ACC / SESSION_LASTJUMP / SESSION_LEAVE
+     * 是 elapsedRealtime 基准的瞬时态，进程重启后基准变化，落盘反而出错。
+     */
+    static void loadSessionState() {
+        try {
+            File f = new File(SESSION_STATE_PATH);
+            if (!f.exists()) return;
+            org.json.JSONObject o = new org.json.JSONObject(readFile(SESSION_STATE_PATH));
+            long day = o.optLong("date", 0);
+            if (day != System.currentTimeMillis() / 86_400_000L) return; // 跨天：直接丢弃
+            org.json.JSONObject j = o.optJSONObject("jumps");
+            if (j != null) {
+                java.util.Iterator<String> it = j.keys();
+                while (it.hasNext()) {
+                    String k = it.next();
+                    SESSION_JUMPS.put(k, new long[]{j.optLong(k, 0), day});
+                }
+            }
+            org.json.JSONObject e = o.optJSONObject("exhausted");
+            if (e != null) {
+                java.util.Iterator<String> it = e.keys();
+                while (it.hasNext()) {
+                    String k = it.next();
+                    SESSION_EXHAUSTED.put(k, new long[]{1, day});
+                }
+            }
+            log("session state loaded: jumps=" + (j == null ? 0 : j.length())
+                + " exhausted=" + (e == null ? 0 : e.length()));
+        } catch (Throwable t) {
+            log("session state load: " + t);
+        }
+    }
+
+    static void flushSessionState() {
+        if (!SESSION_STATE_DIRTY) return;
+        try {
+            org.json.JSONObject o = new org.json.JSONObject();
+            long day = System.currentTimeMillis() / 86_400_000L;
+            o.put("date", day);
+            org.json.JSONObject j = new org.json.JSONObject();
+            for (java.util.Map.Entry<String, long[]> en : SESSION_JUMPS.entrySet()) {
+                if (en.getValue()[1] == day) j.put(en.getKey(), en.getValue()[0]);
+            }
+            o.put("jumps", j);
+            org.json.JSONObject e = new org.json.JSONObject();
+            for (java.util.Map.Entry<String, long[]> en : SESSION_EXHAUSTED.entrySet()) {
+                if (en.getValue()[1] == day) e.put(en.getKey(), 1);
+            }
+            o.put("exhausted", e);
+            java.io.FileWriter w = new java.io.FileWriter(SESSION_STATE_PATH);
+            w.write(o.toString());
+            w.close();
+            SESSION_STATE_DIRTY = false;
+        } catch (Throwable t) {
+            log("session state flush: " + t);
+        }
+    }
+
     static void loadStats() {
         try {
             File f = new File(STATS_PATH);
@@ -317,6 +386,7 @@ public class WatcherMain {
         killOtherWatchers();
         reloadRules();
         loadStats();
+        loadSessionState();
         log("rules loaded=" + BLOCKED + " pkg=" + PKG_BLOCKED);
         writeVersionMarker();
         IBinder am = getService("activity");
@@ -356,7 +426,7 @@ public class WatcherMain {
                     // ★ v25：心跳必须在**主循环里**写 —— 主循环停摆时心跳跟着停，
                     //   App 侧据此判定「进程活着但已不再 reload 规则」并重启。
                     if (tick % 30 == 0) writeHeartbeat();
-                    if (tick % 10 == 0) flushStats();
+                    if (tick % 10 == 0) { flushStats(); flushSessionState(); }
                     sessionTick();
                 } catch (Throwable t) {
                     log("updater error: " + t);
@@ -485,10 +555,10 @@ public class WatcherMain {
             SESSION_MODE.putAll(nextSessM);
             // 规则被删除/关闭的包，清掉它的当日计数与收走状态（app 里关开关即可解除锁定）
             for (String k : SESSION_JUMPS.keySet()) {
-                if (!nextSess.containsKey(k)) SESSION_JUMPS.remove(k);
+                if (!nextSess.containsKey(k)) { SESSION_JUMPS.remove(k); SESSION_STATE_DIRTY = true; }
             }
             for (String k : SESSION_EXHAUSTED.keySet()) {
-                if (!nextSess.containsKey(k)) SESSION_EXHAUSTED.remove(k);
+                if (!nextSess.containsKey(k)) { SESSION_EXHAUSTED.remove(k); SESSION_STATE_DIRTY = true; }
             }
             log("reload: c=" + next.size() + " p=" + nextPkgs.size() + " f=" + nextSess.size()
                 + " g=" + (GLOBAL_EXEMPT_UNTIL > 0 ? 1 : 0));
@@ -572,6 +642,7 @@ public class WatcherMain {
             if ("lock".equals(mode)) {
                 long todayL = System.currentTimeMillis() / 86_400_000L;
                 SESSION_EXHAUSTED.put(pkg, new long[]{1, todayL});
+                SESSION_STATE_DIRTY = true;
                 log("SESSION-LOCK " + pkg + " acc=" + (acc / 1000) + "s -> locked for today");
                 return;
             }
@@ -583,6 +654,7 @@ public class WatcherMain {
             long count = (jc != null && jc[1] == today) ? jc[0] : 0;
             count++;
             SESSION_JUMPS.put(pkg, new long[]{count, today});
+            SESSION_STATE_DIRTY = true;
             Integer mj = SESSION_MAXJ.get(pkg);
             if (mj != null && mj > 0 && count >= mj) {
                 SESSION_EXHAUSTED.put(pkg, new long[]{1, today});
