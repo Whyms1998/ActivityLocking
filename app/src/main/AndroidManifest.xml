@@ -6,6 +6,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!--
+      ★ v1.34.1：WebDAV 云同步。本 App 其余部分全程离线，网络只用于「上传/下载一个备份 JSON」。
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- 使用情况访问权限：声明后 App 才会出现在系统"使用情况访问权限"列表里（特殊权限，用户手动授予） -->
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
@@ -32,6 +37,7 @@
         android:label="应用锁"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.ActivityLock">
 
         <activity

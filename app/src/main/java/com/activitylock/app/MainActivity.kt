@@ -35,6 +35,7 @@ import com.activitylock.app.ui.screens.ScheduleScreen
 import com.activitylock.app.ui.screens.SceneScreen
 import com.activitylock.app.ui.screens.AdminScreen
 import com.activitylock.app.ui.screens.AutoRelockScreen
+import com.activitylock.app.ui.screens.SyncScreen
 import com.activitylock.app.ui.screens.AmnestyScreen
 import com.activitylock.app.ui.screens.LockStrengthScreen
 import com.activitylock.app.ui.screens.FocusScreen
@@ -63,6 +64,8 @@ sealed interface Screen {
     /** v1.29.0：特赦通行证（紧急破例的唯一入口，配额 + 递增）。 */
     data object Amnesty : Screen
     data object AutoRelock : Screen
+    /** v1.34.1：数据同步（WebDAV 云端 + 本地文件）。 */
+    data object Sync : Screen
     data class Detail(val packageName: String) : Screen
     /** 界面详情页（文档 §14.5）：单个 Activity 的自动锁闭 + 解锁验证。 */
 }
@@ -174,7 +177,8 @@ private fun AppRoot(initial: Screen = Screen.Favorites) {
                     onOpenAdmin = { stack.add(Screen.Admin) },
                     onOpenStrength = { stack.add(Screen.LockStrength) },
                     onOpenAmnesty = { stack.add(Screen.Amnesty) },
-                    onOpenAutoRelock = { stack.add(Screen.AutoRelock) }
+                    onOpenAutoRelock = { stack.add(Screen.AutoRelock) },
+                    onOpenSync = { stack.add(Screen.Sync) }
                 )
                 Screen.Verify -> com.activitylock.app.ui.screens.VerifySettingsScreen(
                     onBack = { stack.removeAt(stack.size - 1) }
@@ -221,6 +225,9 @@ private fun AppRoot(initial: Screen = Screen.Favorites) {
                     onOpenVerify = { stack.add(Screen.Verify) }
                 )
                 Screen.Connection -> ConnectionScreen(
+                    onBack = { stack.removeAt(stack.size - 1) }
+                )
+                Screen.Sync -> SyncScreen(
                     onBack = { stack.removeAt(stack.size - 1) }
                 )
                 is Screen.Detail -> ActivityListScreen(

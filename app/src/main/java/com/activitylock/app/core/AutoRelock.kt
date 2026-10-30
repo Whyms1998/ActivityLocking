@@ -281,6 +281,20 @@ object AutoRelock {
     }
 
     /**
+     * ★ v1.34.1：重读 `relock.json`（备份导入后调用）。
+     *
+     * [init] 有 `storeRef != null` 幂等守卫，导入换了文件它不会重读 —— 必须显式重建。
+     * 待锁队列（`relock_pending.json` / [pendingRelock]）是运行态，不重建、不动：
+     * 导入一份配置不该把「已经欠着的重锁」清掉，那等于给了一次免费延期。
+     */
+    fun reload(context: Context) {
+        ctx = context.applicationContext
+        storeRef = AutoRelockStore(ctx.filesDir)
+        if (pendingStoreRef == null) pendingStoreRef = RelockPendingStore(ctx.filesDir)
+        refresh()
+    }
+
+    /**
      * 从磁盘恢复待锁表。
      *
      * 同一次开机 → 原样续算（elapsed 有效）；

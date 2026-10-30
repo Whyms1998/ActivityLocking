@@ -13,8 +13,8 @@ android {
         applicationId = "com.activitylock.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 113
-        versionName = "1.34.0"
+        versionCode = 114
+        versionName = "1.34.1"
     }
 
     buildTypes {
@@ -50,6 +50,8 @@ android {
 
 dependencies {
     testImplementation("junit:junit:4.13.2")
+    // JVM 单测里 android.jar 的 org.json 是抛异常的桩，备份信封测试需要真实现
+    testImplementation("org.json:json:20240303")
     implementation(platform("androidx.compose:compose-bom:2024.09.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")

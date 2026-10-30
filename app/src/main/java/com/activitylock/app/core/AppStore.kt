@@ -104,6 +104,38 @@ object AppStore {
         reloadApps()
     }
 
+    /**
+     * ★ v1.34.1：从磁盘重建全部 Store（备份导入 / 撤销导入后调用）。
+     *
+     * 各 Store 都只在 `init` 里读一次文件，导入把文件换掉之后旧实例仍然抱着
+     * 内存里的旧数据 —— 不重建就会「文件已经换好了、界面还是老样子」，
+     * 而且下一次任意一次写操作会把**旧内存数据**重新覆盖回文件，导入等于白做。
+     * 所以导入后必须走这一条，不能只改文件。
+     */
+    @Synchronized
+    fun reloadFromDisk() {
+        if (!::ruleStore.isInitialized) return
+        ruleStore = RuleStore(appContext.filesDir)
+        historyStore = HistoryStore(appContext.filesDir)
+        presetStore = PresetStore(appContext.filesDir)
+        scheduleStore = ScheduleStore(appContext.filesDir)
+        sceneStore = SceneStore(appContext.filesDir)
+        sessionStore = SessionStore(appContext.filesDir)
+        groupStore = GroupStore(appContext.filesDir)
+        taskStore = TaskStore(appContext.filesDir)
+        rules = ruleStore.rules
+        history = historyStore.entries
+        userPresets = presetStore.presets
+        schedules = scheduleStore.schedules
+        scenes = sceneStore.scenes
+        sessionCfgs = sessionStore.entries
+        groups = groupStore.groups
+        groupAssign = groupStore.assignment
+        appVerify = ruleStore.appVerify
+        tasks = taskStore.tasks
+        VerifyGate.bindAppVerifyProvider { pkg -> appVerify[pkg] }
+    }
+
     /** 方案查找：内置 + 用户方案统一入口。 */
     fun findAnyPreset(id: String): ConfigPreset? =
         BuiltinPresets.all.firstOrNull { it.id == id }

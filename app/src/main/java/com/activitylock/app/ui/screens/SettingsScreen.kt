@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.HistoryToggleOff
 import androidx.compose.material.icons.filled.HourglassBottom
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Policy
@@ -79,6 +80,7 @@ fun SettingsScreen(
     onOpenStrength: () -> Unit,
     onOpenAmnesty: () -> Unit,
     onOpenAutoRelock: () -> Unit,
+    onOpenSync: () -> Unit,
 ) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     /** ★ v1.29.0：控制中心磁贴的重新添加入口。 */
@@ -209,6 +211,14 @@ fun SettingsScreen(
             title = "控制中心磁贴",
             subtitle = "添加上锁 / 解锁 / 特赦",
             onClick = { showTiles = true }
+        )
+        // ★ v1.34.1：数据同步。全部心血都在本地配置里，没有这条入口，换一台手机
+        //   就等于从零再配一遍——而「重新配一遍」的那一刻最容易被放弃。
+        SettingsEntry(
+            icon = Icons.Default.Save,
+            title = "数据同步",
+            subtitle = "WebDAV 云端 / 换机迁移",
+            onClick = onOpenSync
         )
         Spacer(Modifier.height(24.dp))
         Text(
