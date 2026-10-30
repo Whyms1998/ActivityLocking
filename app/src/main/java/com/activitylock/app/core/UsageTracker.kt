@@ -164,6 +164,19 @@ object UsageTracker {
         val pkgs = HashSet<String>(wholePkgs)
         for (k in compKeys) pkgs.add(k.substringBefore('/'))
         val usm = ctx.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        // ★ v1.33.3 界面级次数修正：旧口径「该 Activity 每次 RESUMED 都算一次进入」，
+        //   把「朋友圈 → 动态详情 → 返回朋友圈」这类包内往返每次都 +1，刷一轮就虚满
+        //   （用户实锤：朋友圈设 20 次，主观只进了几次）。
+        //   新口径 = **会话**：进入该界面记 1 次；期间在**同一个 App 内**跳去详情/主页
+        //   再返回，都还是这一次；只有**整个 App 离开前台**（回桌面/切别的 App/熄屏到别的
+        //   App）之后再进入，才算新一次。所有界面级对象通用。
+        //   实现要点：PAUSED 后不能立刻判「包离前台」——事件流里「A PAUSED」总是先于
+        //   「B RESUMED」，包内跳转瞬间会误判。所以 PAUSED 只挂起 pending（记时间戳），
+        //   由下一条名单内事件按**时间差**裁决：包内跳转的 PAUSED→RESUMED 间隔是毫秒级；
+        //   而「回桌面/切走再回来」人手最快也要十几秒。时间差 < 10s 且同包 = 还连续在
+        //   前台（取消清零）；否则 = 真离开了（清掉该包所有会话）。
+        //   用时间差而非「下一个事件是不是别的包」作裁决，是因为切去的 App 可能不在
+        //   监督名单里，其事件会被过滤掉，永远等不到裁决。
         // 每个 (pkg/cls) 的前台起点；结算时同时累加整包与单界面
         val fgStart = HashMap<String, Long>()
         // 每包活跃的 Activity 计数：0 → 1 的跃迁才算「打开一次」。
@@ -172,6 +185,13 @@ object UsageTracker {
         //   计数会永远为 0。也不能用「单个 Activity PAUSED/STOPPED」判离开，
         //   单 Activity 应用内部切页面同样会 PAUSED，会把一次打开误算成多次。
         val active = HashMap<String, Int>()
+        val inSession = HashMap<String, Boolean>()
+        var pendingPkg: String? = null
+        var pendingAt = 0L
+
+        fun clearSessions(pkg: String) {
+            for (k in inSession.keys) if (k.substringBefore('/') == pkg) inSession[k] = false
+        }
 
         fun stat(key: String) = out.getOrPut(key) { TargetUsage() }
         fun settle(pkg: String, cls: String, endMs: Long) {
@@ -192,10 +212,20 @@ object UsageTracker {
                 if (pkg !in pkgs) continue
                 val cls = e.className ?: ""
                 val ck = "$pkg/$cls"
+                // 先裁决上一条挂起的「疑似离前台」
+                val pend = pendingPkg
+                if (pend != null) {
+                    val sameStay = pkg == pend && e.timeStamp - pendingAt < 10_000L
+                    if (!sameStay) clearSessions(pend)
+                    pendingPkg = null
+                }
                 when (e.eventType) {
                     UsageEvents.Event.ACTIVITY_RESUMED -> {
-                        // 界面级次数：该 Activity 的每次 RESUMED 都算一次进入
-                        if (ck in compKeys) stat(ck).opens++
+                        // 界面级次数：会话不存在才记一次
+                        if (ck in compKeys && inSession[ck] != true) {
+                            stat(ck).opens++
+                            inSession[ck] = true
+                        }
                         // 整包次数：包内活跃 Activity 由 0 变 1 —— 即「从后台回到前台」
                         val n = (active[pkg] ?: 0) + 1
                         active[pkg] = n
@@ -206,9 +236,13 @@ object UsageTracker {
                     UsageEvents.Event.ACTIVITY_STOPPED -> {
                         settle(pkg, cls, e.timeStamp)
                         active[pkg] = ((active[pkg] ?: 0) - 1).coerceAtLeast(0)
+                        pendingPkg = pkg
+                        pendingAt = e.timeStamp
                     }
                 }
             }
+            // 流结束：最后挂起的那个包视为已离前台
+            pendingPkg?.let { clearSessions(it) }
             // 仍停在前台的：算到此刻
             val now = System.currentTimeMillis()
             for ((k, s) in fgStart.toList()) {

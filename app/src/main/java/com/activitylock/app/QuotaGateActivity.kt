@@ -38,7 +38,8 @@ import com.activitylock.app.ui.theme.ActivityLockTheme
  *   1. **配色修正** —— 旧版 `Surface(color = 硬编码深色)` 没有配套 contentColor，
  *      标题继承了默认黑色，在深色背景上几乎不可见（真机截图确认）；
  *   2. 改用**真实应用图标**，不再用 emoji 沙漏（与全 App 图标体系一致）；
- *   3. 只讲**刚被拦的那一个对象**，其余超额对象收成一行小字，不再罗列刷屏；
+ *   3. 只讲**刚被拦的那一个对象**，不再罗列其余超额对象（v1.33.3 按用户要求连
+ *      「另有 N 个对象也已达上限」也删了）；
  *   4. 读数封顶（超额后不再显示 98/3 这种一路累加的数字）。
  */
 class QuotaGateActivity : ComponentActivity() {
@@ -55,10 +56,9 @@ class QuotaGateActivity : ComponentActivity() {
         // 旧版没有时退回快照里的第一个，保证永远有内容可显示。
         val hitPkg = intent?.getStringExtra(EXTRA_PKG)
         val primary = blocks.firstOrNull { it.pkg == hitPkg } ?: blocks.firstOrNull()
-        val others = blocks.filter { it !== primary }
         setContent {
             ActivityLockTheme {
-                GateScreen(primary, others.size) { finish() }
+                GateScreen(primary) { finish() }
             }
         }
     }
@@ -69,7 +69,7 @@ class QuotaGateActivity : ComponentActivity() {
 }
 
 @Composable
-private fun GateScreen(block: SuperviseBlock?, others: Int, onDismiss: () -> Unit) {
+private fun GateScreen(block: SuperviseBlock?, onDismiss: () -> Unit) {
     Surface(
         Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background,
@@ -134,15 +134,6 @@ private fun GateScreen(block: SuperviseBlock?, others: Int, onDismiss: () -> Uni
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
-            if (others > 0) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "另有 $others 个对象也已达上限",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
-            }
             Spacer(Modifier.height(32.dp))
             Button(
                 onClick = onDismiss,
