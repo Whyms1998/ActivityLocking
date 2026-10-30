@@ -104,7 +104,7 @@ fun ScheduleScreen(onBack: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
             ) {
                 Text(
-                    if (active) "当前：计划内 · 全部规则已上锁"
+                    if (active) "当前：计划内，全部规则已上锁"
                     // ★ 规范 §1：原来「当前：计划外 · 切换最迟 15 分钟内自动生效」是中点串状态+说明
                     else "当前：计划外 · 最迟 15 分钟生效",
                     style = MaterialTheme.typography.labelMedium,

@@ -173,9 +173,9 @@ class QuotaService : Service() {
         runCatching { AmsController.checkHeartbeat() }
         val blocks = SuperviseEngine.blocks(this)
         val text = if (blocks.isEmpty()) {
-            "监督中 · ${AppStore.tasks.count { it.enabled && it.rules.active }} 个任务生效"
+            "监督中，${AppStore.tasks.count { it.enabled && it.rules.active }} 个任务生效"
         } else {
-            blocks.joinToString(" · ") { "${it.key.substringAfterLast('/')} ${reasonShort(it.reason)}" }
+            blocks.joinToString("，") { "${it.key.substringAfterLast('/')} ${reasonShort(it.reason)}" }
         }
         updateNotification(text)
     }

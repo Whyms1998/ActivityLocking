@@ -165,13 +165,23 @@ private fun CheckRow(title: String, ok: Boolean) {
                 modifier = Modifier.size(20.dp)
             )
             Spacer(Modifier.width(12.dp))
+            // ★ v1.32.2：原来「title（未满足）」/「title · 未满足」两种串法都被否掉，
+            //   状态改成独立小号红字，标题本身保持干净。
             Text(
-                // ★ 规范 §1：原来 "title · 未满足" 用中点串状态 → 括号收进标题里
-                title + (if (ok) "" else " · 未满足"),
+                title,
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (ok) MaterialTheme.colorScheme.onSurface
-                else MaterialTheme.colorScheme.error
+                else MaterialTheme.colorScheme.error,
+                modifier = Modifier.weight(1f)
             )
+            if (!ok) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "未满足",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
         }
     }
 }

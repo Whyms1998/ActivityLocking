@@ -1646,7 +1646,7 @@ private fun superviseQuotaSummary(exact: SuperviseTask?, whole: SuperviseTask?):
         return if (exact.enabled) rulesText(exact)
         else "独立任务「${exact.name}」已关闭"
     }
-    if (whole != null && whole.enabled) return "跟随整包「${whole.name}」 · " + rulesText(whole)
+    if (whole != null && whole.enabled) return "跟随整包「${whole.name}」：" + rulesText(whole)
     return "未设置"
 }
 

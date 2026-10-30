@@ -1,10 +1,12 @@
 package com.activitylock.app.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,7 +21,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -32,6 +33,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -224,29 +227,53 @@ fun StatsScreen(onBack: () -> Unit, bottomTab: Boolean = false) {
                                 AppIcon(pkg, 36.dp)
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text(
-                                        // ★ 规范 §1：原来 "应用名 · 已超额" 用中点串状态 → 括号
-                                        (AppStore.findApp(pkg)?.label ?: pkg.substringAfterLast('.'))
-                                            + if (isOver) " · 已超额" else "",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        color = if (isOver) MaterialTheme.colorScheme.error
-                                        else MaterialTheme.colorScheme.onSurface
-                                    )
+                                    // ★ v1.32.2：状态不靠标点串在名字后面（括号被用户否掉、中点被规范否掉），
+                                    //   改成「名字 + 右侧小号红字标签」，与场景行同一个范式。
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            AppStore.findApp(pkg)?.label ?: pkg.substringAfterLast('.'),
+                                            style = MaterialTheme.typography.titleSmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false)
+                                        )
+                                        if (isOver) {
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                "已超额",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.error
+                                            )
+                                        }
+                                    }
                                     Spacer(Modifier.height(6.dp))
-                                    LinearProgressIndicator(
-                                        progress = { (count.toFloat() / maxCount.toFloat()).coerceIn(0f, 1f) },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        color = barColor,
-                                    )
+                                    // ★ v1.32.3：换掉 LinearProgressIndicator —— M3 1.3 默认在轨道末端画一个
+                                    //   4dp 的 stop indicator，进度不满时看起来像屏幕上粘了个小圆点（真机截图确认）。
+                                    //   自己画一条更干净，也顺手把高度压到 6dp。
+                                    Box(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .height(6.dp)
+                                            .clip(RoundedCornerShape(3.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    ) {
+                                        Box(
+                                            Modifier
+                                                .fillMaxWidth(
+                                                    (count.toFloat() / maxCount.toFloat()).coerceIn(0f, 1f)
+                                                )
+                                                .fillMaxHeight()
+                                                .clip(RoundedCornerShape(3.dp))
+                                                .background(barColor)
+                                        )
+                                    }
                                 }
                                 Spacer(Modifier.width(12.dp))
                                 Text(
                                     "$count 次",
                                     style = MaterialTheme.typography.titleMedium
                                         .copy(fontFeatureSettings = "tnum"),
-                                    color = MaterialTheme.colorScheme.primary
+                                    color = barColor
                                 )
                             }
                         }

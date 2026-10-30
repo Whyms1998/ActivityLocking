@@ -287,6 +287,6 @@ object AmnestyStore {
             VerifyGate.METHOD_PASSWORD -> "输入特赦密码"
             else -> "无需验证"
         }
-        return if (escalate(ctx) && n > 0) "$base · 本周期第 ${n + 1} 次" else base
+        return if (escalate(ctx) && n > 0) "$base，本周期第 ${n + 1} 次" else base
     }
 }

@@ -335,7 +335,7 @@ private fun readout(task: SuperviseTask, stats: Map<String, TargetUsage>): List<
         val prefix = if (task.targets.size == 1) "" else t.shortName() + " "
         val suffix = when {
             over -> " 已用完"
-            !enabled -> " · 已关闭"
+            !enabled -> " 已关闭"
             else -> ""
         }
         out.add((prefix + bits.joinToString(" · ") + suffix) to over)
