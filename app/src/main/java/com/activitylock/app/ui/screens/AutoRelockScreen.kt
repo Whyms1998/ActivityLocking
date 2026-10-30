@@ -200,7 +200,7 @@ fun AutoRelockScreen(
             text = {
                 Column {
                     Text(
-                        "到点自动重新上锁（0 = 立即）",
+                        "到点自动重新上锁",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

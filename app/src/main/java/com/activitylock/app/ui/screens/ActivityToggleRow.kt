@@ -119,7 +119,7 @@ fun ActivityToggleRow(
                     when {
                         o.mode == "block" && redirect != null -> "已锁定：点桌面图标将直达搜索页"
                         o.mode == "block" -> "已改用拦截模式：该界面打开时自动退出"
-                        else -> "锁定完成（组件已禁用）"
+                        else -> "锁定完成"
                     }
                 )
             } else {
@@ -266,7 +266,7 @@ private fun validateRedirectTarget(context: android.content.Context, pkg: String
         val info2 = runCatching { pm.getActivityInfo(cn2, 0) }.getOrNull()
             ?: return "找不到该界面，请确认类名是否正确"
         return if (info2.exported) null
-        else "该界面未导出（exported=false），拦截器无法拉起；请改用纯深链写法"
+        else "该界面未导出，拦截器无法拉起；请改用纯深链写法"
     }
     if (target.contains("://")) {
         val handled = runCatching {
@@ -283,7 +283,7 @@ private fun validateRedirectTarget(context: android.content.Context, pkg: String
     val info = runCatching { pm.getActivityInfo(cn, 0) }.getOrNull()
         ?: return "找不到该界面，请确认类名是否正确"
     return if (info.exported) null
-    else "该界面未导出（exported=false），拦截器无法拉起；请改用搜索页深链（推荐）或已导出的界面"
+    else "该界面未导出，拦截器无法拉起；请改用搜索页深链或已导出的界面"
 }
 
 /** 锁定确认：跳转目标 + 解锁条件一起设置。任意界面锁定时均弹出。 */
@@ -403,7 +403,7 @@ private fun LockLauncherDialog(
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     androidx.compose.material3.RadioButton(selected = !redirectMode, onClick = { redirectMode = false })
-                    Text("仅拦截（打开无反应）", style = MaterialTheme.typography.bodyMedium)
+                    Text("仅拦截", style = MaterialTheme.typography.bodyMedium)
                 }
                 Spacer(Modifier.height(12.dp))
                 UnlockConditionEditor(

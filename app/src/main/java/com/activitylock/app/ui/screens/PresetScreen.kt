@@ -232,7 +232,7 @@ fun PresetScreen(onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { deleting = null },
             title = { Text("删除方案？") },
-            text = { Text("「${p.label}」将从我的方案中移除（不影响已锁定的界面）。") },
+            text = { Text("「${p.label}」将从我的方案中移除。") },
             confirmButton = {
                 TextButton(onClick = { AppStore.removePreset(p.id); deleting = null }) { Text("删除") }
             },
@@ -297,8 +297,8 @@ private fun PresetRow(
                 }
                 Text(
                     // ★ 规范 §1：原来无深链时补 "  · 纯拦截"（中点占位）→ 换成括号说明
-                    "锁 ${preset.activityName.substringAfterLast('.')}" +
-                        (preset.redirectUri?.let { "  ↗ $it" } ?: "（纯拦截）"),
+                    "锁 ${com.activitylock.app.core.activityShortName(preset.activityName)}" +
+                        (preset.redirectUri?.let { "  ↗ $it" } ?: "纯拦截"),
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = FontFamily.Monospace,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -383,12 +383,12 @@ private fun PresetEditorDialog(
                 )
                 OutlinedTextField(
                     value = activity, onValueChange = { activity = it.trim() },
-                    label = { Text("要锁定的界面（完整类名）") },
+                    label = { Text("要锁定的界面") },
                     singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = redirect, onValueChange = { redirect = it },
-                    label = { Text("拦截后跳转深链（留空则纯拦截）") },
+                    label = { Text("跳转深链") },
                     singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(

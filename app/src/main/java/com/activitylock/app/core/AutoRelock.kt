@@ -399,6 +399,11 @@ object AutoRelock {
             else -> relockAfterUnlockEnabled
         }
         if (!globalOn) return AutoRelockStore.NOT_LOCK
+        // ★ v1.32.2：已被启用的监督任务接管的对象，额度内**不重锁**。
+        //   两套同时生效会出现「额度还没用完，先被自动锁闭踢出来」——
+        //   朋友圈限每天 5 次 + 自动锁闭 30 秒，看半分钟就被打断，用户会当成 bug。
+        //   超额后由监督直接锁死，比自动锁闭更严，不需要这一层再补刀。
+        if (superviseHandles(pkg, cls)) return AutoRelockStore.NOT_LOCK
         if (cls != null) {
             val c = store.activityCfg(pkg, cls)
             if (c != null) {
@@ -416,6 +421,22 @@ object AutoRelock {
     /** 该界面/应用某链路是否参与（含全局闸与界面级否决）。 */
     fun lockedByState(pkg: String?, cls: String?, link: Int): Boolean =
         lockSec(pkg, cls, link) >= 0
+
+    /**
+     * 该对象是否已被**启用中的监督任务**覆盖（★ v1.32.2）。
+     *
+     * 整包任务会覆盖该包下所有界面（watcher 下发的是包级条目），所以
+     * `isWholeApp` 的匹配置为真就算接管。
+     */
+    fun superviseHandles(pkg: String?, cls: String?): Boolean = runCatching {
+        if (pkg.isNullOrBlank()) return@runCatching false
+        val key = if (cls.isNullOrBlank()) pkg else "$pkg/$cls"
+        AppStore.tasks.any { t ->
+            t.enabled && t.rules.active && t.targets.any {
+                it.key == key || (it.isWholeApp && it.pkg == pkg)
+            }
+        }
+    }.getOrDefault(false)
 
     fun effectiveDelaySec(pkg: String?, cls: String?): Int =
         resolveDelay(pkg, cls, AutoRelockStore.LINK_UNLOCK)

@@ -73,7 +73,7 @@ fun AdminScreen(onBack: () -> Unit) {
                     Spacer(Modifier.height(8.dp))
                     Text(
                         "激活后「应用锁」无法被直接卸载或清除数据；" +
-                            "需先在系统设置中停用本保护（停用会收到警告）",
+                            "需先在系统设置中停用本保护",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -101,7 +101,7 @@ fun AdminScreen(onBack: () -> Unit) {
                 ) { Text("立即锁屏") }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "如需停用：系统设置 → 设备管理器 → 取消激活（会收到警告）。",
+                    "如需停用：系统设置 → 设备管理器 → 取消激活。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

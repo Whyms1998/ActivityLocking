@@ -29,6 +29,15 @@ public class WatcherMain {
     static final String LOG_PATH = "/data/local/tmp/al_watcher.log";
     /** APP 用该文件判断常驻进程是否为当前版本（不匹配则杀掉重启）。 */
     static final String VERSION_MARKER = "/data/local/tmp/al_watcher.ver";
+    /**
+     * 心跳文件（★ v25）：每 60 秒写入当前时间戳。
+     *
+     * 为什么需要它：进程「存活」不等于「主循环还在转」。真机实测过 tick 停在某一刻、
+     * 之后 5 分钟不再写任何日志的情况 —— 进程在 ps 里看得见、旧规则照样拦，
+     * 但 reloadRules 不再执行，于是「改了设置永远不生效」且用户毫无提示。
+     * App 侧看门狗读这个文件的时间戳判断主循环是否停摆，停了就杀掉重拉。
+     */
+    static final String HEARTBEAT_PATH = "/data/local/tmp/al_watcher.hb";
     static final int WATCHER_VERSION = com.activitylock.app.core.WatcherVersion.VERSION;
 
     /** 组件全名 -> 跳转深链（空串表示仅拦截、不跳转）。 */
@@ -113,6 +122,20 @@ public class WatcherMain {
                     }
                 } catch (Throwable ignored) {
                 }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 写心跳时间戳（★ v25）。只在主循环里调用，失败无所谓——看门狗会自己判超时。 */
+    static void writeHeartbeat() {
+        try {
+            java.io.FileOutputStream out =
+                    new java.io.FileOutputStream(HEARTBEAT_PATH, false);
+            try {
+                out.write(String.valueOf(System.currentTimeMillis()).getBytes("UTF-8"));
+            } finally {
+                out.close();
             }
         } catch (Throwable ignored) {
         }
@@ -330,6 +353,9 @@ public class WatcherMain {
                         //    一天 8640 行纯噪音）
                         if (tick % 150 == 0) log("watcher alive tick=" + tick);
                     }
+                    // ★ v25：心跳必须在**主循环里**写 —— 主循环停摆时心跳跟着停，
+                    //   App 侧据此判定「进程活着但已不再 reload 规则」并重启。
+                    if (tick % 30 == 0) writeHeartbeat();
                     if (tick % 10 == 0) flushStats();
                     sessionTick();
                 } catch (Throwable t) {
@@ -652,6 +678,9 @@ public class WatcherMain {
             i.setComponent(new ComponentName(pkg, target));
         }
         i.addFlags(0x10000000); // NEW_TASK
+        // ★ v25：额度说明页要知道「这次是谁被拦了」。没有这个 extra 时，
+        //   多个对象同时超额只能把全部对象罗列出来（用户看到跟自己无关的条目）。
+        if (QUOTA_GATE.equals(target)) i.putExtra("pkg", pkg);
         return i;
     }
 
@@ -749,6 +778,14 @@ public class WatcherMain {
             } else {
                 cmd = new String[]{"/system/bin/am", "start", "--user", "0",
                         "-n", pkg + "/" + target};
+            }
+            // ★ v25：与 binder 通路保持一致，把被拦包名带给额度说明页
+            if (QUOTA_GATE.equals(target)) {
+                String[] withExtra = java.util.Arrays.copyOf(cmd, cmd.length + 3);
+                withExtra[cmd.length] = "--es";
+                withExtra[cmd.length + 1] = "pkg";
+                withExtra[cmd.length + 2] = pkg;
+                cmd = withExtra;
             }
             Process p = new ProcessBuilder(cmd)
                     .redirectErrorStream(true).start();

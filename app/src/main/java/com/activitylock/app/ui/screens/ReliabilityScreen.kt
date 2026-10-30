@@ -66,7 +66,7 @@ fun ReliabilityScreen(onBack: () -> Unit) {
         listOf(
             "Shizuku 已连接并授权" to (ShizukuManager.installed() && ShizukuManager.granted()),
             "拦截进程存活" to AmsController.isRunning(),
-            "防卸载保护（设备管理员）" to isActiveAdmin(ctx),
+            "防卸载保护" to isActiveAdmin(ctx),
             "通知权限" to notificationsEnabled(ctx),
             "电池优化已豁免" to batteryExempt(ctx),
         )
@@ -167,7 +167,7 @@ private fun CheckRow(title: String, ok: Boolean) {
             Spacer(Modifier.width(12.dp))
             Text(
                 // ★ 规范 §1：原来 "title · 未满足" 用中点串状态 → 括号收进标题里
-                title + (if (ok) "" else "（未满足）"),
+                title + (if (ok) "" else " · 未满足"),
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (ok) MaterialTheme.colorScheme.onSurface
                 else MaterialTheme.colorScheme.error

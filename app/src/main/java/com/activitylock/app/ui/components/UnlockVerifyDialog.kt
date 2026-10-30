@@ -171,7 +171,7 @@ fun UnlockVerifyDialog(
                         var input by remember { mutableStateOf("") }
                         val ok = input == target
                         Text(
-                            "请照抄下面这串随机密码（无法记忆，打断下意识解锁）",
+                            "请照抄下面这串随机密码",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.fillMaxWidth()

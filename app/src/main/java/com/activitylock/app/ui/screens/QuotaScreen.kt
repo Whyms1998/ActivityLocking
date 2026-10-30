@@ -66,6 +66,7 @@ import com.activitylock.app.core.SuperviseTarget
 import com.activitylock.app.core.SuperviseTask
 import com.activitylock.app.core.TargetUsage
 import com.activitylock.app.core.UsageTracker
+import com.activitylock.app.core.cappedUsed
 import com.activitylock.app.ui.components.AppIcon
 import com.activitylock.app.ui.components.DialogImePan
 import com.activitylock.app.ui.components.DialogImeResize
@@ -310,6 +311,9 @@ private fun minLabel(sec: Int): String =
 /** 今日读数：优先显示已超额的对象，最多两条。 */
 private fun readout(task: SuperviseTask, stats: Map<String, TargetUsage>): List<Pair<String, Boolean>> {
     val out = ArrayList<Pair<String, Boolean>>()
+    // ★ 任务关闭时一律不判超额：开关关着就必须显示成「不生效」，
+    //   否则出现「开关灰着却标红已用完」的假读数（真机实测就是这个现象）。
+    val enabled = task.enabled
     for (t in task.targets) {
         val st = stats[t.key] ?: TargetUsage()
         val r = task.rules
@@ -317,19 +321,24 @@ private fun readout(task: SuperviseTask, stats: Map<String, TargetUsage>): List<
             (r.windowLimitSec != null && st.sec >= r.windowLimitSec)
         val overCnt = (r.dayLimitCnt != null && st.opens >= r.dayLimitCnt) ||
             (r.windowLimitCnt != null && st.opens >= r.windowLimitCnt)
-        val over = overTime || overCnt
+        val over = enabled && (overTime || overCnt)
         if (!over && out.size >= 2) continue
         val bits = ArrayList<String>()
         if (r.dayLimitSec != null || r.windowLimitSec != null) {
             val limitSec = (r.dayLimitSec ?: r.windowLimitSec)!!.toLong()
-            bits.add("${st.sec / 60}/${limitSec / 60} 分钟")
+            bits.add("${cappedUsed(st.sec / 60, limitSec / 60)}/${limitSec / 60} 分钟")
         }
         if (r.dayLimitCnt != null || r.windowLimitCnt != null) {
             val limitCnt = r.dayLimitCnt ?: r.windowLimitCnt!!
-            bits.add("${st.opens}/$limitCnt 次")
+            bits.add("${cappedUsed(st.opens, limitCnt)}/$limitCnt 次")
         }
         val prefix = if (task.targets.size == 1) "" else t.shortName() + " "
-        out.add((prefix + bits.joinToString(" · ") + if (over) " 已用完" else "") to over)
+        val suffix = when {
+            over -> " 已用完"
+            !enabled -> " · 已关闭"
+            else -> ""
+        }
+        out.add((prefix + bits.joinToString(" · ") + suffix) to over)
         if (out.size >= 3) break
     }
     return out
@@ -435,7 +444,7 @@ private fun TaskEditSheet(
                     // 监督对象
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            "监督对象（${targets.size}）",
+                            "监督对象",
                             style = MaterialTheme.typography.titleSmall,
                             modifier = Modifier.weight(1f)
                         )
@@ -674,7 +683,7 @@ private fun AddTargetDialog(
                 } else {
                     val a = app!!
                     Text(
-                        "只监督某个界面时，其他界面（如聊天）不受影响",
+                        "只监督某个界面时，其他界面不受影响",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

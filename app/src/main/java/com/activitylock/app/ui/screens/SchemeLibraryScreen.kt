@@ -153,7 +153,7 @@ fun SchemeLibraryScreen(onBack: () -> Unit) {
                 if (filtered.isEmpty() && handlers.isEmpty()) {
                     item {
                         Text(
-                            "没有匹配结果。输入 scheme 名称（如 xhsdiscover）可查询本机响应。",
+                            "没有匹配结果。输入 scheme 名称可查询本机响应。",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(24.dp)

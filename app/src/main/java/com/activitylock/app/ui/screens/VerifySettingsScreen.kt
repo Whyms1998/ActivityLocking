@@ -175,7 +175,7 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                 Card(Modifier.fillMaxWidth()) {
                     Text(
                         "验证开启中：关闭验证、切换方式、修改密码、缩短等待，" +
-                            "每一次都需要当场通过最强验证（含各界面单独设置的密码与答题）。",
+                            "每一次都需要当场通过最强验证。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(12.dp)
@@ -218,7 +218,7 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                         Text("解锁时间范围", style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "只在设定时段内允许解锁（支持跨午夜，如 22:00-07:00），其余时间验证一律不通过",
+                            "只在设定时段内允许解锁，支持跨午夜；其余时间验证一律不通过",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -274,7 +274,7 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
                                         val s = parseHm(windowStartText)
                                         val e = parseHm(windowEndText)
                                         if (s == null || e == null) {
-                                            AppStore.toast("请先填写时间（HH:mm，如 22:00 / 07:00），再点「保存时段」")
+                                            AppStore.toast("请先填写时间，如 22:00，再点「保存时段」")
                                         } else {
                                             requireVerify {
                                                 windowEnabled = true
@@ -510,11 +510,19 @@ fun VerifySettingsScreen(onBack: () -> Unit) {
             }
 
             Spacer(Modifier.height(16.dp))
-            Text(
-                "每个界面可在工作台「编辑」里单独设置解锁条件，单独设置优先于全局；降低门槛的修改会要求当场验证",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            // ★ v1.32.2：原来三句话挤成一整段，读起来要断句两次。拆成三条。
+            Column {
+                listOf(
+                    "单个界面可在工作台「编辑」里单独设置，优先于这里",
+                    "降低门槛的修改需要当场验证",
+                ).forEach {
+                    Text(
+                        "· $it",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
     }
 

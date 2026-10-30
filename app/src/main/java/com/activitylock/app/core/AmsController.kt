@@ -1,6 +1,7 @@
 package com.activitylock.app.core
 
 import android.content.pm.PackageManager
+import android.util.Log
 import moe.shizuku.server.IShizukuService
 import rikka.shizuku.Shizuku
 import java.io.File
@@ -16,6 +17,10 @@ object AmsController {
 
     private val WATCHER_VERSION = WatcherVersion.VERSION
     private const val VERSION_MARKER = "/data/local/tmp/al_watcher.ver"
+    private const val HEARTBEAT = "/data/local/tmp/al_watcher.hb"
+
+    /** 心跳超过这个间隔没更新就判定主循环停摆（心跳周期 60 秒，留 3 倍容错）。 */
+    private const val STALL_MS = 180_000L
 
     fun rulesFile(): File {
         val ctx = AppStore.context()
@@ -180,4 +185,26 @@ object AmsController {
 
     /** 拦截是否真正生效（watcher 运行中即视为生效）。 */
     fun isActive(): Boolean = isRunning()
+
+    /**
+     * 看门狗（★ v1.32.2）：**进程活着 ≠ 主循环还在转**。
+     *
+     * 真机实测：watcher 的 tick 在某一刻彻底停住（日志 5 分钟无新增），进程仍在
+     * `ps` 里、旧规则照样拦，但 `reloadRules()` 不再执行 —— 于是「改了设置永远
+     * 不生效」，而且没有任何提示。心跳由主循环每 60 秒写一次时间戳，停摆即失联。
+     *
+     * @return true 表示健康（或已修复/无需判断）
+     */
+    fun checkHeartbeat(): Boolean = runCatching {
+        if (!isRunning()) return@runCatching true
+        val hb = java.io.File(HEARTBEAT)
+        // 没有心跳文件 = 还没升到 v25 的旧进程，不做判断（升级流程会自己换掉它）
+        if (!hb.exists()) return@runCatching true
+        val beat = hb.readText().trim().toLongOrNull() ?: return@runCatching true
+        val age = System.currentTimeMillis() - beat
+        if (age in 0..STALL_MS) return@runCatching true
+        Log.w("AmsController", "watcher 主循环停摆 ${age / 1000}s，重启")
+        killWatcher()
+        ensureStarted()
+    }.getOrDefault(true)
 }

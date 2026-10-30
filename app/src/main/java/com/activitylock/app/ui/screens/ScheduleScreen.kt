@@ -104,9 +104,9 @@ fun ScheduleScreen(onBack: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
             ) {
                 Text(
-                    if (active) "当前：计划内（全部规则已自动上锁）"
+                    if (active) "当前：计划内 · 全部规则已上锁"
                     // ★ 规范 §1：原来「当前：计划外 · 切换最迟 15 分钟内自动生效」是中点串状态+说明
-                    else "当前：计划外（切换最迟 15 分钟内自动生效）",
+                    else "当前：计划外 · 最迟 15 分钟生效",
                     style = MaterialTheme.typography.labelMedium,
                     color = if (active) MaterialTheme.colorScheme.onPrimaryContainer
                     else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -254,7 +254,7 @@ private fun ScheduleEditorDialog(
                 OutlinedTextField(
                     value = label,
                     onValueChange = { label = it },
-                    label = { Text("名称（如：睡眠模式）") },
+                    label = { Text("名称") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -269,7 +269,7 @@ private fun ScheduleEditorDialog(
                     }
                 }
                 Text(
-                    "窗口内全部规则自动上锁（退出后恢复原状）；支持跨午夜。",
+                    "窗口内全部规则自动上锁；支持跨午夜。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

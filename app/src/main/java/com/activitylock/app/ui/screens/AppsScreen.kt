@@ -87,7 +87,7 @@ fun AppsScreen(onOpenDetail: (String) -> Unit) {
                 verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center
             ) {
                 Text(
-                    if (AppStore.appsLoadFailed) "应用列表读取失败\n（系统偶发限制，点重试再试一次）"
+                    if (AppStore.appsLoadFailed) "应用列表读取失败"
                     else "暂无应用",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -121,7 +121,7 @@ fun AppsScreen(onOpenDetail: (String) -> Unit) {
             LazyColumn(Modifier.fillMaxSize()) {
                 if (matchedActivities.isNotEmpty()) {
                     item {
-                        SectionHeader("匹配的界面（可直接开关）")
+                        SectionHeader("匹配的界面")
                     }
                     items(matchedActivities, key = { it.second.cls + it.first.packageName }) { (app, act) ->
                         ActivityToggleRow(

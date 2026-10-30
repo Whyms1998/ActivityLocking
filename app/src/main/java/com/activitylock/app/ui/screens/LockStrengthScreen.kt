@@ -103,8 +103,8 @@ fun LockStrengthScreen(onBack: () -> Unit) {
                 Spacer(Modifier.height(12.dp))
                 Text(
                     "这一项和特赦是「总闸与口子」的关系：\n" +
-                        "· 关着 —— 计划时段内仍然可以申请特赦（默认，适合把特赦留给真急事）；\n" +
-                        "· 打开 —— 计划时段内连特赦也不给（适合「晚上必须断」的场景）。",
+                        "· 关着 —— 计划时段内仍然可以申请特赦；\n" +
+                        "· 打开 —— 计划时段内连特赦也不给。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp)

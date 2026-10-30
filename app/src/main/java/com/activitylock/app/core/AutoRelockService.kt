@@ -211,7 +211,17 @@ class AutoRelockService : Service() {
     /** 只在确实需要时才做重活，任何异常都不能让服务挂掉。 */
     private fun safeTick() {
         runCatching { tick() }
+        // 看门狗（★ v1.32.2）：每 2 分钟检查 watcher 主循环是否停摆。
+        // 放在这个**不含监督任务也常驻**的服务里，否则「只配了锁定、没配额度」时
+        // 没人看着 watcher —— 而锁定恰恰是最需要它活着的场景。
+        val now = System.currentTimeMillis()
+        if (now - lastWatchdogAt > 120_000L) {
+            lastWatchdogAt = now
+            runCatching { AmsController.checkHeartbeat() }
+        }
     }
+
+    private var lastWatchdogAt = 0L
 
     /**
      * 亮屏时把锁屏链路的计时段结算进 `accMs` 并暂停（S10）。

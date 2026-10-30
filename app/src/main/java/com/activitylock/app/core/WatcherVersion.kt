@@ -13,7 +13,14 @@ package com.activitylock.app.core
  * - 23 → 24（v1.29.0）：reloadRules() 修 S2 —— 规则缓存改为「解析成功后」才更新。
  *   旧进程会把半截 JSON 记成"已应用"，之后永不重试，表现为「改了设置不生效」。
  *   不抬版本的话，升级后旧进程还在，这个修复等于没打。
+ *
+ * - 24 → 25（v1.32.2）：
+ *   ① 额度说明页需要知道「这次是谁被拦了」——buildTargetIntent / startViaAm
+ *      两个通路都给 QuotaGate 补 extra(pkg)，否则多对象超额只能罗列全部；
+ *   ② 新增独立**心跳文件**（每 60 秒写一次时间戳）。真机实测：watcher 进程活着、
+ *      日志却在某个时刻彻底停写（tick 卡死），拦截还在用旧规则跑，表现为
+ *      「改了设置永不生效且毫无提示」。App 侧看门狗据此重启它。
  */
 object WatcherVersion {
-    const val VERSION = 24
+    const val VERSION = 25
 }

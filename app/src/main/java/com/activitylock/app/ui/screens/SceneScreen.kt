@@ -80,7 +80,7 @@ fun SceneScreen(onBack: () -> Unit) {
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             Text(
-                "启用场景 = 成员方案逐个应用（上锁）；停用场景 = 成员 App 全部解锁（需过解锁验证）。",
+                "启用后，场景里的 App 全部上锁；停用后全部解锁。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
@@ -217,7 +217,7 @@ private fun SceneEditorDialog(
                 OutlinedTextField(
                     value = label,
                     onValueChange = { label = it },
-                    label = { Text("场景名称（如：工作模式）") },
+                    label = { Text("场景名称") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )

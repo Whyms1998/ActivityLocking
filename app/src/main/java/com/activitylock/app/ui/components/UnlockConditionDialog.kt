@@ -96,14 +96,15 @@ fun UnlockConditionDialog(
             //   resize 会让窗口随键盘收缩后重新居中，键盘高度一变就上下跳；PAN 窗口不动。
             com.activitylock.app.ui.components.DialogImePan()
             Column(Modifier.verticalScroll(rememberScrollState())) {
+                // ★ v1.32.2：原来两行（备注 + 完整类名），长类名还会折行。
+                //   合并成一行可读名「酷安 › 首页」——类名细节在编辑弹窗的跳转目标里能看到。
                 Text(
-                    rule.note.ifBlank { rule.activityName.substringAfterLast('.') },
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                Text(
-                    rule.activityName,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    com.activitylock.app.core.superviseTargetLabel(
+                        rule.packageName, rule.activityName
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(

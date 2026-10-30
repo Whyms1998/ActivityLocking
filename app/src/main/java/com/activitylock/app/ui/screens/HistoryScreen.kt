@@ -178,7 +178,7 @@ fun HistoryScreen(onBack: () -> Unit) {
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(
-                                        h.note.ifBlank { h.activityName.substringAfterLast('.') },
+                                        h.note.ifBlank { com.activitylock.app.core.activityShortName(h.activityName) },
                                         style = MaterialTheme.typography.titleSmall,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
@@ -198,7 +198,7 @@ fun HistoryScreen(onBack: () -> Unit) {
                                             append(timeFmt.format(Date(h.time)))
                                             append("  ")
                                             append(if (h.action == "LOCK") "锁定" else "解锁")
-                                            append(if (h.mode == "block") "（拦截）" else "")
+                                            append(if (h.mode == "block") " 拦截" else "")
                                         },
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -229,7 +229,7 @@ fun HistoryScreen(onBack: () -> Unit) {
                                                 when {
                                                     recorded != null -> "已重新锁定：点图标直达搜索页"
                                                     builtin != null -> "已重新锁定，并按内置方案恢复跳转：$builtin"
-                                                    else -> "已重新锁定（该条目为纯拦截，无跳转）"
+                                                    else -> "已重新锁定，该条目为纯拦截"
                                                 }
                                             )
                                             refreshTick++

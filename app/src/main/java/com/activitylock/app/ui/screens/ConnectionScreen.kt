@@ -90,9 +90,9 @@ fun ConnectionScreen(onBack: () -> Unit) {
                     Spacer(Modifier.height(8.dp))
                     // ★ 规范 §1：这里的 `·` 是当项目符号用，弱且和"中点连接"混淆 → 换成正经的圆点 bullet
                     Text(
-                        "1. 安装 Shizuku（应用商店或 GitHub：rikkaapps/Shizuku）。\n" +
+                        "1. 安装 Shizuku：应用商店搜索，或 GitHub 仓库 rikkaapps/Shizuku。\n" +
                             "2. 启动 Shizuku：\n" +
-                            "   • 无线调试：开发者选项 → 无线调试 → 配对（Shizuku 内有引导）。\n" +
+                            "   • 无线调试：开发者选项 → 无线调试 → 配对。\n" +
                             "   • 连接电脑：adb shell sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh\n" +
                             "3. 在本页点击「申请授权」。\n" +
                             "4. 回到「应用」页，搜索并锁定目标界面。\n\n" +
@@ -108,7 +108,7 @@ fun ConnectionScreen(onBack: () -> Unit) {
                     Text("工作原理", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "锁定会优先尝试组件禁用（pm disable-user）；" +
+                        "锁定会优先尝试组件禁用；" +
                             "在 HyperOS 等禁用组件受限制的系统上，会自动改用「系统级拦截模式」：" +
                             "注册系统的 Activity 启动控制器，被锁定的界面在启动时被系统直接拒绝，" +
                             "应用其他功能完全不受影响。\n\n" +

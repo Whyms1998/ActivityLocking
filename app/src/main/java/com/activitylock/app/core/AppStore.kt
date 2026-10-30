@@ -96,6 +96,7 @@ object AppStore {
         appVerify = ruleStore.appVerify
         tasks = taskStore.tasks
         migrateQuotasToTasks()
+        sanitizePresetNotes()
         // ★ 把「应用级解锁条件」的来源交给 VerifyGate：它的 requirementFor() 是纯静态
         //   调用点极多（磁贴 / 临时解锁 / 场景 / 收藏夹 / 自动锁闭页…），
         //   用 provider 注入可以一次性拿到三级链，无需改动全部调用点。
@@ -300,6 +301,39 @@ object AppStore {
             runCatching { AmsController.writeRules() }
             runCatching { QuotaService.startIfQuotaConfigured(appContext) }
         }
+    }
+
+    /**
+     * 一次性清洗：内置预设当年把**说明句**写进了「备注」，界面上直接显示成
+     * 「锁定首页，点图标直达搜索页（显式组件+深链，锁定前先测试跳转）」这种长句，
+     * 既占两行又像 bug。预设本身已改成短名（v1.32.2），这里把旧数据一起归位。
+     *
+     * 只替换**与当年预设文案完全一致**的备注，用户自己改过的一律不动。
+     */
+    private fun sanitizePresetNotes() {
+        val prefs = appContext.getSharedPreferences("note_clean", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("done", false)) return
+        val legacy = mapOf(
+            "锁桌面入口，点图标直达搜索页（真机验证）。建议再锁主容器 MainActivity 做纯拦截（不填跳转），挡掉返回时的推荐流" to "入口跳搜索",
+            "屏蔽首页信息流，点图标直达搜索（锁定前先测试跳转）" to "首页跳搜索",
+            "屏蔽首页推荐，点图标直达搜索（锁定前先测试跳转）" to "首页跳搜索",
+            "点图标直达搜索路由（锁定前先测试跳转）" to "首页跳搜索",
+            "点图标直达搜索（锁定前先测试跳转）" to "首页跳搜索",
+            "锁定首页，点图标直达搜索页（显式组件+深链，锁定前先测试跳转）" to "首页跳搜索",
+            "纯拦截：zhihu://search 落地后主容器在上层，不能做跳转" to "纯拦截",
+            "锁定首页容器，跳转搜索结果页（锁定前先测试跳转）" to "首页跳搜索",
+            "屏蔽朋友圈时间线（其他功能不受影响）" to "只限朋友圈",
+            "入口整锁（搜索深链未验证，可在收藏夹自行补跳转）" to "入口整锁",
+            "锁定入口，点图标直达搜索页（换过图标则需重新锁定新入口）" to "锁定入口跳搜索",
+        )
+        var changed = 0
+        for (r in rules.toList()) {
+            val short = legacy[r.note] ?: continue
+            updateNote(r.packageName, r.activityName, short)
+            changed++
+        }
+        prefs.edit().putBoolean("done", true).apply()
+        if (changed > 0) android.util.Log.i("AppStore", "note sanitize changed=$changed")
     }
 
     /**

@@ -365,9 +365,9 @@ fun FavoritesScreen(
     fun onOutcome(o: LockOutcome) {
         when {
             !o.locked && o.mode == "none" -> AppStore.toast("操作失败：${o.detail}")
-            o.locked && o.mode == "pm" -> AppStore.toast("锁定完成（组件已禁用）")
+            o.locked && o.mode == "pm" -> AppStore.toast("锁定完成")
             o.locked && o.mode == "block" -> AppStore.toast("已启用拦截：该界面将无法启动")
-            else -> AppStore.toast("已解锁（条目保留，可随时再锁定）")
+            else -> AppStore.toast("已解锁")
         }
     }
 
@@ -646,7 +646,7 @@ fun FavoritesScreen(
                     ) {
                         Text(
                             if (focusStarting) "启动中…"
-                            else "▶ 开始专注 " + focusCfg.durationMin + " 分钟（上次配置）"
+                            else "▶ 开始专注 " + focusCfg.durationMin + " 分钟"
                         )
                     }
                 }
@@ -762,16 +762,19 @@ fun FavoritesScreen(
                                     AppIcon(rule.packageName, 42.dp)
                                     Spacer(Modifier.width(12.dp))
                                     Column(Modifier.weight(1f)) {
+                                        // ★ v1.32.2：允许两行。内置预设给的备注是说明句
+                                        //   （「锁定首页，点图标直达搜索页（显式组件+深链…）」），
+                                        //   单行必然被拦腰截断，读起来像出了 bug。
                                         Text(
-                                            rule.note.ifBlank { rule.activityName.substringAfterLast('.') },
+                                            rule.note.ifBlank { com.activitylock.app.core.activityShortName(rule.activityName) },
                                             style = MaterialTheme.typography.titleSmall,
-                                            maxLines = 1,
+                                            maxLines = 2,
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
-                                            rule.activityName,
+                                            // ★ v1.32.2：显示可读短名（「首页」），不再是 MainActivity
+                                            com.activitylock.app.core.activityShortName(rule.activityName),
                                             style = MaterialTheme.typography.bodySmall,
-                                            fontFamily = FontFamily.Monospace,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
@@ -898,7 +901,7 @@ fun FavoritesScreen(
         var valueLink by remember { mutableStateOf<Int?>(null) }
         var pendingApply by remember { mutableStateOf<(() -> Unit)?>(null) }
         val label = AppStore.findApp(rule.packageName)?.label
-            ?: rule.activityName.substringAfterLast('.')
+            ?: com.activitylock.app.core.activityShortName(rule.activityName)
 
         fun globalFor(link: Int): Int = when (link) {
             AutoRelockStore.LINK_EXIT -> AutoRelock.globalExitDelaySec
@@ -930,6 +933,17 @@ fun FavoritesScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    // ★ v1.32.2：已被监督任务接管的界面，自动锁闭在额度内不生效
+                    //   （见 AutoRelock.lockSec）。不说明的话，用户以为开关坏了。
+                    if (AutoRelock.superviseHandles(rule.packageName, rule.activityName)) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "这个界面已由「APP 监督」接管：额度内不再触发自动锁闭，" +
+                                "超额后直接锁死。取消那边的监督任务后，这里的设置才会重新生效。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary
+                        )
+                    }
                     Spacer(Modifier.height(10.dp))
                     SceneRowsCard(
                         rows = listOf(
@@ -1178,7 +1192,7 @@ fun FavoritesScreen(
             title = { Text("删除条目？") },
             text = {
                 Text(
-                    "「${rule.note.ifBlank { rule.activityName.substringAfterLast('.') }}」将从收藏夹移除。\n" +
+                    "「${rule.note.ifBlank { com.activitylock.app.core.activityShortName(rule.activityName) }}」将从收藏夹移除。\n" +
                         "历史记录中仍可找回并重新锁定。"
                 )
             },
@@ -1410,13 +1424,10 @@ private fun RuleEditDialog(
     var sessionOn by remember(rule) { mutableStateOf(sessionExisting != null) }
     var sessionTarget by remember(rule) { mutableStateOf(sessionExisting?.target ?: "") }
     var sessionLimitSec by remember(rule) { mutableStateOf((sessionExisting?.limitMin ?: 5) * 60) }
-    // ★「弹不出输入法」的直接修复：打开即把焦点放到备注框并**主动唤起键盘**。
+    // ★ v1.32.2：不再「打开就聚焦备注并弹键盘」。
+    //   实测打开弹窗时键盘立刻顶上来，把「保存 / 取消」整个盖住，用户必须先收键盘；
+    //   而备注是**可选项**，多数时候根本不需要输入。现改为点备注框时才唤起键盘。
     val noteFocus = remember { androidx.compose.ui.focus.FocusRequester() }
-    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
-    LaunchedEffect(rule) {
-        noteFocus.requestFocus()
-        keyboard?.show()
-    }
     fun doSave() {
         AppStore.updateNote(rule.packageName, rule.activityName, text)
         // 每日额度不在这里保存 —— 它有自己的弹窗，改完即生效（见 TargetQuotaDialog）
@@ -1453,7 +1464,17 @@ private fun RuleEditDialog(
             //   中文输入法键盘高度一变弹窗就上下跳（酷安编辑弹窗实测）；PAN 窗口不动。
             com.activitylock.app.ui.components.DialogImePan()
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text(rule.activityName, style = MaterialTheme.typography.bodySmall)
+                // ★ v1.32.2：这里原本直接贴完整类名（com.coolapk.market.view.main.MainActivity），
+                //   一行放不下被拦腰折成两行（"...MainA" / "ctivity"），极难读。
+                //   改用「App › 界面名」，类名细节留给下面「跳转目标」字段。
+                Text(
+                    com.activitylock.app.core.superviseTargetLabel(
+                        rule.packageName, rule.activityName
+                    ),
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 // ★ 跳转必须配在「桌面入口」上（2026-10-13 真机排查第二根因）：
                 //   点桌面图标会先进入 launcher Activity；若那个界面也被锁、且没配跳转，
                 //   请求在入口就被挡回桌面，更深界面上配的跳转**永远执行不到**。
@@ -1497,7 +1518,7 @@ private fun RuleEditDialog(
                     OutlinedTextField(
                         value = redirect,
                         onValueChange = { redirect = it },
-                        label = { Text("跳转目标（拦截后跳到这里）") },
+                        label = { Text("跳转目标") },
                     // ★ v1.24.7：跳转是自由文本，不是数字范围输入，此处只声明不做钳制；
                     //   真正需要范围的输入框一律用「原样保留 + isError + 常驻范围文案」口径。
                         placeholder = { Text("深链 xhsdiscover://search 或界面类名") },
@@ -1517,7 +1538,7 @@ private fun RuleEditDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("每日监督（这个界面）", style = MaterialTheme.typography.labelMedium)
+                        Text("每日监督", style = MaterialTheme.typography.labelMedium)
                         Text(
                             quotaSummary,
                             style = MaterialTheme.typography.bodySmall,
@@ -1547,13 +1568,13 @@ private fun RuleEditDialog(
                     OutlinedTextField(
                         value = sessionTarget,
                         onValueChange = { sessionTarget = it },
-                        label = { Text("跳转目标（包名或深链）") },
+                        label = { Text("跳转目标") },
                         placeholder = { Text("如 com.tencent.weread 或深链") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(6.dp))
-                    Text("连续使用（刷满即跳）", style = MaterialTheme.typography.labelMedium)
+                    Text("连续使用", style = MaterialTheme.typography.labelMedium)
                     DurationField(
                         seconds = sessionLimitSec,
                         onChange = { sessionLimitSec = it },
@@ -1575,7 +1596,7 @@ private fun RuleEditDialog(
                     AppStore.upsertPreset(
                         ConfigPreset(
                             id = "",
-                            label = text.ifBlank { rule.activityName.substringAfterLast('.') },
+                            label = text.ifBlank { com.activitylock.app.core.activityShortName(rule.activityName) },
                             packageName = rule.packageName,
                             activityName = rule.activityName,
                             redirectUri = redirect.trim().takeIf { it.isNotBlank() },
@@ -1619,11 +1640,13 @@ private fun superviseQuotaSummary(exact: SuperviseTask?, whole: SuperviseTask?):
     if (exact != null && exact.targets.size > 1) {
         return "由任务「${exact.name}」统一管理 ${exact.targets.size} 个对象"
     }
+    // ★ v1.32.2：独立任务不再加「单独：」前缀 —— 这一行就在「每日监督」下面，
+    //   默认就是它自己的规则，前缀纯属噪音；只有「跟随整包」才需要点明来源。
     if (exact != null) {
-        return if (exact.enabled) "单独：" + rulesText(exact)
+        return if (exact.enabled) rulesText(exact)
         else "独立任务「${exact.name}」已关闭"
     }
-    if (whole != null && whole.enabled) return "跟随整包「${whole.name}」：" + rulesText(whole)
+    if (whole != null && whole.enabled) return "跟随整包「${whole.name}」 · " + rulesText(whole)
     return "未设置"
 }
 
@@ -1696,7 +1719,7 @@ private fun TargetQuotaDialog(rule: LockRule, onDismiss: () -> Unit) {
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("每日监督（这个界面）", style = MaterialTheme.typography.titleMedium) },
+        title = { Text("每日监督", style = MaterialTheme.typography.titleMedium) },
         text = {
             com.activitylock.app.ui.components.DialogImePan()
             Column {
@@ -1709,7 +1732,7 @@ private fun TargetQuotaDialog(rule: LockRule, onDismiss: () -> Unit) {
                 Spacer(Modifier.height(10.dp))
                 if (shared) {
                     Text(
-                        "这个界面由任务「${exact?.name}」统一管理（${exact?.targets?.size} 个对象共用一套规则），" +
+                        "这个界面由任务「${exact?.name}」统一管理，" +
                             "请去「设置 → APP 监督」调整",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1725,6 +1748,15 @@ private fun TargetQuotaDialog(rule: LockRule, onDismiss: () -> Unit) {
                     )
                     Spacer(Modifier.height(8.dp))
                 }
+                // ★ v1.32.2：说明与自动锁闭的关系（用户明确选择的叠加口径）
+                if (!shared) {
+                    Text(
+                        "额度内不会触发自动锁闭；超额后整天锁死，次日 0 点恢复。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
+                }
                 DurationField(
                     seconds = sec,
                     onChange = { sec = it },
@@ -1739,7 +1771,7 @@ private fun TargetQuotaDialog(rule: LockRule, onDismiss: () -> Unit) {
                 )
                 if (secOver) {
                     Text(
-                        "超出上限：每天最多 24 小时（1440 分钟）",
+                        "超出上限：每天最多 24 小时",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error
                     )
@@ -1748,7 +1780,7 @@ private fun TargetQuotaDialog(rule: LockRule, onDismiss: () -> Unit) {
                 OutlinedTextField(
                     value = cntText,
                     onValueChange = { cntText = it.filter { c -> c.isDigit() }.take(3) },
-                    label = { Text("每天最多打开（留空不限）") },
+                    label = { Text("每天最多打开") },
                     singleLine = true,
                     isError = cntInvalid,
                     enabled = !shared,
@@ -1858,16 +1890,16 @@ private fun GridDetailDialog(
                             ) {
                                 Column(Modifier.weight(1f)) {
                                     Text(
-                                        rule.note.ifBlank { rule.activityName.substringAfterLast('.') },
+                                        rule.note.ifBlank { com.activitylock.app.core.activityShortName(rule.activityName) },
                                         style = MaterialTheme.typography.bodyMedium,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        rule.activityName.substringAfterLast('.') +
+                                        // ★ v1.32.2：短名（MainActivity → 首页），不再是裸类名
+                                        com.activitylock.app.core.activityShortName(rule.activityName) +
                                             if (rule.locked) " · 拦截中" else "",
                                         style = MaterialTheme.typography.labelSmall,
-                                        fontFamily = FontFamily.Monospace,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis

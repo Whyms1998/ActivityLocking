@@ -46,11 +46,42 @@ fun superviseTargetLabel(pkg: String, cls: String?): String {
         preset != null && preset.length > app.length && preset.startsWith(app) ->
             preset.removePrefix(app)
         preset != null && preset != app -> preset
-        else -> cls.substringAfterLast('.')
-            .removeSuffix("Activity").removeSuffix("UI").removeSuffix("Ui")
+        else -> activityShortName(cls)
     }
     return "$app › $simple"
 }
+
+/**
+ * 界面类名 → 可读短名（★ v1.32.2）。
+ *
+ * 没有人工标注时，通用入口类名统一叫「首页」——否则去掉 Activity 后缀会剩下
+ * "Main"、"Launcher" 这种残词，比类名本身还难懂（真机显示成「酷安 › Main」）。
+ */
+fun activityShortName(cls: String): String {
+    val raw = cls.substringAfterLast('.')
+        .removeSuffix("Activity").removeSuffix("UI").removeSuffix("Ui")
+    return if (raw in COMMON_ENTRY_NAMES) "首页" else raw
+}
+
+/** 各家「首页 / 入口」的常见类名残词（去掉 Activity 后缀之后）。 */
+private val COMMON_ENTRY_NAMES = setOf(
+    "Main", "Launcher", "Splash", "Index", "Welcome", "Home", "Entry", "Start"
+)
+
+/**
+ * 读数封顶：超额之后**不再显示真实增量**。
+ *
+ * 原因：达标后每次点图标都会产生一次「打开尝试」，UsageStats 里就是一次新会话，
+ * 读数会一路涨到 98/3、200/5 这种数字（真机实测）。对用户来说这个数字没有信息量
+ * （反正已经进不去了），只会让人怀疑统计坏了。统一封顶到上限值。
+ *
+ * 注意：只影响**展示**，引擎判定与拦截完全不受影响（判定用的是 >=，封顶前后结论一致）。
+ */
+fun cappedUsed(used: Long, limit: Long): Long =
+    if (limit > 0 && used > limit) limit else used
+
+fun cappedUsed(used: Int, limit: Int): Int =
+    if (limit > 0 && used > limit) limit else used
 
 /**
  * 监督规则集：6 类约束，可任意组合。任一项非空/为真即视为启用。

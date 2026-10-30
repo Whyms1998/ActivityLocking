@@ -161,10 +161,16 @@ class QuotaService : Service() {
         val last = lastGateAt[pkg] ?: 0L
         if (now - last < 30_000L) return
         lastGateAt[pkg] = now
-        ShizukuManager.run("am", "start", "-n", AmsController.QUOTA_GATE_COMPONENT)
+        // ★ 带上被拦的包名：额度页据此只讲这一个对象，不罗列全部超额项
+        ShizukuManager.run(
+            "am", "start", "-n", AmsController.QUOTA_GATE_COMPONENT, "--es", "pkg", pkg
+        )
     }
 
     private fun tickSlow() {
+        // 顺带当看门狗：watcher 主循环停摆时（进程还在、规则不再 reload）
+        // 自动杀掉重拉。检查很轻（读一个十几字节的文件），60 秒一次足够。
+        runCatching { AmsController.checkHeartbeat() }
         val blocks = SuperviseEngine.blocks(this)
         val text = if (blocks.isEmpty()) {
             "监督中 · ${AppStore.tasks.count { it.enabled && it.rules.active }} 个任务生效"

@@ -232,7 +232,7 @@ fun SettingsScreen(
                 Column {
                     Text(
                         "三个磁贴一直都在，但应用更新后系统会把它们从控制中心里移除。" +
-                            "点「添加」放回去（Android 13+ 会弹一次系统确认）。",
+                            "点「添加」放回去。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -243,7 +243,7 @@ fun SettingsScreen(
                     TileRow("全部上锁", "把所有已配置界面立即锁上") {
                         requestAddTile(ctx, LockAllTileService::class.java, "全部上锁", R.drawable.ic_tile_lock)
                     }
-                    TileRow("全部解锁", "把全部界面置为解锁（需通过解锁验证）") {
+                    TileRow("全部解锁", "把全部界面置为解锁") {
                         requestAddTile(ctx, UnlockAllTileService::class.java, "全部解锁", R.drawable.ic_tile_unlock)
                     }
                 }

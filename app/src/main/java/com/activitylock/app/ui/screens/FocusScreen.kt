@@ -198,7 +198,7 @@ fun FocusScreen(onBack: () -> Unit) {
                     FilterChip(
                         selected = mode == "whitelist",
                         onClick = { mode = "whitelist" },
-                        label = { Text("白名单（锁全部第三方）") }
+                        label = { Text("白名单") }
                     )
                 }
                 Spacer(Modifier.height(16.dp))
@@ -237,8 +237,8 @@ fun FocusScreen(onBack: () -> Unit) {
                     Column {
                         Text("严格模式", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            if (com.activitylock.app.core.SelfCode.hasCode(ctx)) "已绑定自律码：关闭需输入"
-                            else "开启将生成自律码，关闭需输入",
+                            if (com.activitylock.app.core.SelfCode.hasCode(ctx)) "已绑定自律码，关闭时要输入"
+                            else "开启后生成自律码，用来关闭",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -246,8 +246,8 @@ fun FocusScreen(onBack: () -> Unit) {
                 }
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    if (mode == "selected") "选择要拦截的 App（已锁定规则的 App）"
-                    else "勾选白名单（专注期间可正常使用的 App）",
+                    if (mode == "selected") "选择要拦截的 App"
+                    else "勾选专注期间可以用的 App",
                     style = MaterialTheme.typography.titleSmall
                 )
                 Spacer(Modifier.height(4.dp))
@@ -272,7 +272,14 @@ fun FocusScreen(onBack: () -> Unit) {
                     val label = AppStore.findApp(it)?.label ?: it
                     label.contains(filter.trim(), true) || it.contains(filter.trim(), true)
                 }
-                LazyColumn(Modifier.weight(1f)) {
+                LazyColumn(
+                    Modifier.weight(1f),
+                    // ★ v1.32.2：底部留出间距。原来列表最后一行紧贴「开始专注」按钮，
+                    //   视觉上像被按钮切掉一半（真机截图确认）。
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        top = 2.dp, bottom = 10.dp
+                    )
+                ) {
                     items(visible, key = { it }) { pkg ->
                         val checked = pkg in selected
                         Row(

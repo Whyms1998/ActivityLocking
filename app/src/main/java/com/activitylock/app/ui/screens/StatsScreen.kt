@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -64,6 +65,10 @@ fun StatsScreen(onBack: () -> Unit, bottomTab: Boolean = false) {
         topBar = {
             TopAppBar(
                 title = { Text("拦截统计", style = MaterialTheme.typography.titleMedium) },
+                // ★ v1.32.2：外层 MainActivity 的 Scaffold 已经把状态栏 inset 让进来了，
+                //   TopAppBar 默认又加一次 statusBars → 标题比「应用」「设置」两个 Tab
+                //   低了整整一条状态栏的高度（真机对比截图确认）。这里清零。
+                windowInsets = WindowInsets(0, 0, 0, 0),
                 navigationIcon = {
                     // 作为底部 tab 一级页时不显示返回箭头（去掉自指的死循环）
                     if (!bottomTab) {
@@ -90,7 +95,7 @@ fun StatsScreen(onBack: () -> Unit, bottomTab: Boolean = false) {
                 Text("暂无统计数据", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "拦截发生后自动计数（每 20 秒落盘一次）。\n确认 Shizuku 已连接且至少拦截过一次。",
+                    "拦截发生后自动计数。\n确认 Shizuku 已连接且至少拦截过一次。",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -203,7 +208,7 @@ fun StatsScreen(onBack: () -> Unit, bottomTab: Boolean = false) {
                 if (s.apps.isNotEmpty()) {
                     item {
                         Text(
-                            "分 App（今日）",
+                            "分 App",
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
@@ -222,7 +227,7 @@ fun StatsScreen(onBack: () -> Unit, bottomTab: Boolean = false) {
                                     Text(
                                         // ★ 规范 §1：原来 "应用名 · 已超额" 用中点串状态 → 括号
                                         (AppStore.findApp(pkg)?.label ?: pkg.substringAfterLast('.'))
-                                            + if (isOver) "（已超额）" else "",
+                                            + if (isOver) " · 已超额" else "",
                                         style = MaterialTheme.typography.titleSmall,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
