@@ -89,7 +89,8 @@ fun QuotaScreen(onBack: () -> Unit) {
     val tasks = AppStore.tasks
     val hasPerm = UsageTracker.hasPermission(ctx)
     var editing by remember { mutableStateOf<SuperviseTask?>(null) }
-    var pendingDelete by remember { mutableStateOf<SuperviseTask?>(null) }
+    /** 削弱性修改的验证闸门：hint + 确认后才执行的动作（v1.33.0）。 */
+    var pendingAction by remember { mutableStateOf<Pair<String, (() -> Unit)>?>(null) }
 
     // 读数每 5 秒刷一次（系统事件是权威源，读实时算，不依赖任何缓存）
     var tick by remember { mutableStateOf(0) }
@@ -148,7 +149,14 @@ fun QuotaScreen(onBack: () -> Unit) {
                     task = task,
                     stats = stats,
                     onEdit = { editing = task },
-                    onToggle = { AppStore.setTaskEnabled(task.id, it) },
+                    onToggle = { on ->
+                        // ★ v1.33.0：关任务 = 削弱，先过验证；开任务是收紧，直接放行
+                        if (on) AppStore.setTaskEnabled(task.id, true)
+                        else pendingAction =
+                            ("关闭任务「${task.name}」等于解除监督，需要先通过验证") to {
+                                AppStore.setTaskEnabled(task.id, false)
+                            }
+                    },
                 )
             }
             item { Spacer(Modifier.height(24.dp)) }
@@ -156,21 +164,27 @@ fun QuotaScreen(onBack: () -> Unit) {
     }
 
     editing?.let { t ->
+        val existed = tasks.any { it.id == t.id }
+        val oldTask = tasks.firstOrNull { it.id == t.id }
         TaskEditSheet(
             initial = t,
-            isNew = tasks.none { it.id == t.id },
+            isNew = !existed,
             onDismiss = { editing = null },
-            onSave = {
-                AppStore.upsertTask(it)
-                editing = null
+            onSave = { nt ->
+                // ★ v1.33.0：放宽（调大额度 / 清限制 / 关禁止 / 摘对象 / 缩时段 / 关任务）先验证
+                if (com.activitylock.app.core.superviseWeakened(oldTask, nt)) {
+                    pendingAction = ("放宽监督额度需要先通过验证") to {
+                        AppStore.upsertTask(nt)
+                        editing = null
+                    }
+                } else {
+                    AppStore.upsertTask(nt)
+                    editing = null
+                }
             },
             onDelete = {
-                // 删除 = 解除监督，属削弱性动作：该任务下有对象正在被拦时必须先过验证
-                val blocked = SuperviseEngine.blocks(ctx).any { b ->
-                    t.targets.any { x -> x.key == b.key }
-                }
-                if (blocked) pendingDelete = t
-                else {
+                // 删除 = 解除监督，属削弱性动作：一律先过验证（v1.33.0 起不看是否正在拦）
+                pendingAction = ("删除任务「${t.name}」等于解除监督，需要先通过验证") to {
                     AppStore.removeTask(t.id)
                     editing = null
                 }
@@ -178,17 +192,17 @@ fun QuotaScreen(onBack: () -> Unit) {
         )
     }
 
-    pendingDelete?.let { t ->
+    pendingAction?.let { (hint, action) ->
         com.activitylock.app.ui.components.UnlockVerifyDialog(
             requirement = com.activitylock.app.core.VerifyGate.bulkRequirement(ctx, AppStore.rules),
-            title = "删除监督任务验证",
-            hint = "该任务下有 App 正在被拦截，删除等于解除监督",
+            title = "修改监督验证",
+            hint = hint,
+            enforceWindow = false,
             onConfirmed = {
-                AppStore.removeTask(t.id)
-                pendingDelete = null
-                editing = null
+                action()
+                pendingAction = null
             },
-            onDismiss = { pendingDelete = null },
+            onDismiss = { pendingAction = null },
         )
     }
 }
@@ -370,6 +384,9 @@ private fun TaskEditSheet(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        // ★ v1.33.0：「选择应用」画在**这个**窗口里（见 AddTargetOverlay 注释），
+        //   所以整块内容包一层 Box，覆盖层叠在主面板之上。
+        Box(Modifier.fillMaxSize()) {
         Surface(
             Modifier.fillMaxWidth().fillMaxHeight(0.94f),
             color = MaterialTheme.colorScheme.surface,
@@ -526,17 +543,18 @@ private fun TaskEditSheet(
                 }
             }
         }
-    }
 
-    if (adding) {
-        AddTargetDialog(
-            existing = targets.map { it.key }.toSet(),
-            onPick = {
-                if (targets.none { x -> x.key == it.key }) targets = targets + it
-                adding = false
-            },
-            onDismiss = { adding = false },
-        )
+        if (adding) {
+            AddTargetOverlay(
+                existing = targets.map { it.key }.toSet(),
+                onPick = {
+                    if (targets.none { x -> x.key == it.key }) targets = targets + it
+                    adding = false
+                },
+                onDismiss = { adding = false },
+            )
+        }
+        }
     }
 }
 
@@ -600,7 +618,7 @@ private fun CountRuleRow(title: String, value: Int?, onChange: (Int?) -> Unit) {
 // ---------------- 添加监督对象 ----------------
 
 @Composable
-private fun AddTargetDialog(
+private fun AddTargetOverlay(
     existing: Set<String>,
     onPick: (SuperviseTarget) -> Unit,
     onDismiss: () -> Unit,
@@ -608,13 +626,16 @@ private fun AddTargetDialog(
     var query by remember { mutableStateOf("") }
     var app by remember { mutableStateOf<AppEntry?>(null) }
 
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surface
-        ) {
-            DialogImePan()
-            Column(Modifier.padding(14.dp)) {
+    // ★ v1.33.0：这里绝不能再开第二层 Dialog —— 弹窗套弹窗时输入法打不进第二层窗口
+    //   （真机复现：搜索框已聚焦但键盘不弹；dumpsys 的 mInputShown=true 是打到
+    //   底层「新建任务」窗口的假象，adb input text 也注不进去）。
+    //   改成画在「新建任务」同一个 DialogWindow 里的覆盖层，输入法直接可用；
+    //   softInputMode 沿用面板的 ADJUST_RESIZE，键盘弹出时列表自动缩到键盘上方。
+    Surface(
+        Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.surface
+    ) {
+        Column(Modifier.fillMaxSize().padding(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (app != null) {
                         TextButton(onClick = { app = null }) { Text("‹ 返回") }
@@ -742,5 +763,4 @@ private fun AddTargetDialog(
                 }
             }
         }
-    }
 }

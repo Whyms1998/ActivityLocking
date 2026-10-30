@@ -1669,7 +1669,8 @@ private fun quotaDurLabel(sec: Int): String = when {
  *    会拦掉包内所有组件，做不了「包级拦截 + 单界面放行」），所以不承诺「单独设置就
  *    不受整包约束」，否则就是个看起来生效、实际不生效的假开关；
  *  - 多对象任务 → 只读，去监督页改；
- *  - 该对象超额中且额度有变化 → 先过验证（改额度 = 解除拦截，属削弱类动作）。
+ *  - ★ v1.33.0：调大或清除额度 → 先过验证（削弱类动作，与「关闭自动锁闭」同一道闸；
+ *    不再要求超额中才拦，那个前提挡不住「提前把 5 改成 50」的规避）。
  */
 @Composable
 private fun TargetQuotaDialog(rule: LockRule, onDismiss: () -> Unit) {
@@ -1711,9 +1712,15 @@ private fun TargetQuotaDialog(rule: LockRule, onDismiss: () -> Unit) {
     fun requestSave() {
         val newSec = sec.takeIf { it >= 60 }
         val newCnt = cntVal?.takeIf { it in 1..999 }
-        // 超额中调额度 = 削弱类动作，先过验证（与配额页移除同一道闸）
-        needVerify = !shared && overNow &&
-            (newSec != exact?.rules?.dayLimitSec || newCnt != exact?.rules?.dayLimitCnt)
+        val old = exact
+        // ★ v1.33.0：调大 / 清除额度 = 削弱（跟「关闭自动锁闭」同一道闸），
+        //   不再要求「正在超额中」才拦 —— 那个前提挡不住「白天还没超额就先把
+        //   次数从 5 改到 50」这种提前规避。收紧（调小 / 新增限制）不拦。
+        val weaken = old != null && (
+            (old.rules.dayLimitSec != null && (newSec == null || newSec > old.rules.dayLimitSec)) ||
+                (old.rules.dayLimitCnt != null && (newCnt == null || newCnt > old.rules.dayLimitCnt))
+            )
+        needVerify = weaken
         if (!needVerify) save()
     }
 
@@ -1799,10 +1806,12 @@ private fun TargetQuotaDialog(rule: LockRule, onDismiss: () -> Unit) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                if (overNow && !shared) {
+                // ★ v1.33.0：只要已有额度，放宽就需要验证 —— 提前说明，别等人点了保存才冒出来
+                if (!shared && exact != null) {
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "这个界面今日已被拦下；调整额度需要先通过验证",
+                        if (overNow) "这个界面今日已被拦下；调大或清除额度需要先通过验证"
+                        else "调大或清除额度需要先通过验证",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error
                     )
@@ -1824,7 +1833,8 @@ private fun TargetQuotaDialog(rule: LockRule, onDismiss: () -> Unit) {
         com.activitylock.app.ui.components.UnlockVerifyDialog(
             requirement = VerifyGate.bulkRequirement(ctx, AppStore.rules),
             title = "调整额度验证",
-            hint = "这个界面今日已被拦下，调整额度等于解除拦截",
+            hint = "调大或清除额度等于放宽监督，需要先通过验证",
+            enforceWindow = false,
             onConfirmed = {
                 needVerify = false
                 save()

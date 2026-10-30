@@ -152,6 +152,34 @@ data class SuperviseTask(
 private class TaskData(val tasks: MutableList<SuperviseTask> = mutableListOf())
 
 /**
+ * 削弱判定（★ v1.33.0）：新任务配置是否比旧任务更宽松。
+ *
+ * 「调大额度 / 清除限制 / 关掉禁止 / 摘掉对象 / 缩短生效时段 / 关任务」都算削弱——
+ * 与自动锁闭「关闭、调大延迟需先验证」同一个口径：放宽约束必须先过验证，
+ * 收紧（新增限制、调小额度、开任务、加对象）不拦。old 为 null（新建任务）不算。
+ */
+fun superviseWeakened(old: SuperviseTask?, new: SuperviseTask): Boolean {
+    if (old == null) return false
+    if (old.enabled && !new.enabled) return true
+    if (!old.enabled) return false
+    if (old.rules.forbid && !new.rules.forbid) return true
+    if (loosened(old.rules.windowLimitSec, new.rules.windowLimitSec)) return true
+    if (loosened(old.rules.windowLimitCnt, new.rules.windowLimitCnt)) return true
+    if (loosened(old.rules.dayLimitSec, new.rules.dayLimitSec)) return true
+    if (loosened(old.rules.dayLimitCnt, new.rules.dayLimitCnt)) return true
+    if (old.targets.any { o -> new.targets.none { it.key == o.key } }) return true
+    // 生效时段缩短（老时段有新时段覆盖不到的分钟）= 每天有一段没人管
+    for (minute in 0 until 1440) {
+        if (old.inWindow(minute) && !new.inWindow(minute)) return true
+    }
+    return false
+}
+
+/** 有限制 → 无限制或更大 = 放宽；无限制 → 有限制 = 收紧（不算）。 */
+private fun loosened(old: Int?, new: Int?): Boolean =
+    old != null && (new == null || new > old)
+
+/**
  * 监督任务持久化（supervise_tasks.json）。
  * 与 RuleStore 同构：MutableStateFlow + JSON 落盘，全部写方法 @Synchronized。
  */
