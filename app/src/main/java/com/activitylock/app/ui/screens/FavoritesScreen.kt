@@ -54,6 +54,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
@@ -103,6 +104,7 @@ import com.activitylock.app.core.FocusEngine
 import com.activitylock.app.core.FocusState
 import com.activitylock.app.core.Scene
 import com.activitylock.app.core.SceneEngine
+import com.activitylock.app.core.SuperviseTask
 import com.activitylock.app.core.UnlockExemptions
 import com.activitylock.app.core.VerifyGate
 import com.activitylock.app.ui.components.AppIcon
@@ -210,6 +212,8 @@ fun FavoritesScreen(
     var relockCfgRule by remember { mutableStateOf<LockRule?>(null) }
     /** 界面级自动锁闭削弱修改的验证闸门。 */
     var relockCfgVerify by remember { mutableStateOf<(() -> Unit)?>(null) }
+    /** 正在配置每日监督额度的界面（★ v1.32.0：独立弹窗，与自动锁闭同构）。 */
+    var quotaCfgRule by remember { mutableStateOf<LockRule?>(null) }
 
     // ---- 分组 / 搜索 / 多选 / 批量（借鉴雹的首页交互） ----
     /** null = 全部；"" = 默认（未分组）；其他 = 分组 id。 */
@@ -1216,8 +1220,14 @@ fun FavoritesScreen(
             rule = rule,
             onDismiss = { editing = null },
             onEditUnlock = { editingUnlock = it },
+            onEditQuota = { quotaCfgRule = it },
             onRefreshPm = { refreshPmState() },
         )
+    }
+
+    // ---------- 界面级每日监督额度（★ v1.32.0：独立弹窗，改完即生效） ----------
+    quotaCfgRule?.let { rule ->
+        TargetQuotaDialog(rule = rule, onDismiss = { quotaCfgRule = null })
     }
 
     // ---------- 解锁条件独立弹窗（卡片 / 编辑对话框 / 自动锁闭页共用） ----------
@@ -1373,6 +1383,8 @@ private fun RuleEditDialog(
     onDismiss: () -> Unit,
     /** 打开解锁条件弹层（与工作台共用同一个 editingUnlock 状态）。 */
     onEditUnlock: (LockRule) -> Unit,
+    /** 打开「这个界面的每日监督」弹窗（额度在那边独立保存并立即生效）。 */
+    onEditQuota: (LockRule) -> Unit,
     /** 保存跳转后的父级刷新（pm 状态）。 */
     onRefreshPm: () -> Unit,
 ) {
@@ -1382,34 +1394,17 @@ private fun RuleEditDialog(
     var redirect by remember(rule) { mutableStateOf(rule.redirectUri ?: "") }
     /** 应用跳转开关：关 = 仅拦截（redirect 存空）；开 = 显示目标输入。 */
     var redirectOn by remember(rule) { mutableStateOf(redirect.isNotBlank()) }
-    // ★ v1.32.0：这里是**这个界面**（pkg/cls）的每日监督额度，不是整包。
-    //   - 该界面自己被某个任务监督（且独占一套规则）→ 可就地改；
-    //   - 只有整包任务在管这个 App → 只读（就地改会改到整个 App 的额度）；
-    //   - 完全没有任务 → 可就地新建一个只含该界面的任务。
-    val exactQuotaTask = remember(rule) {
-        AppStore.tasks.firstOrNull { t ->
-            t.targets.any { it.key == "${rule.packageName}/${rule.activityName}" }
-        }
+    // ★ v1.32.0：这个界面（pkg/cls）的每日额度改到**独立弹窗**里设置
+    //   （与「解锁条件」「自动锁闭」同一套交互：本对话框给入口，子弹窗立即生效）。
+    //   原先把两个输入框内联在这里，一旦该 App 有整包任务在管就退化成几行只读文字，
+    //   用户根本找不到设置入口（真机截图确认）。
+    val quotaSummary = remember(rule, AppStore.tasks) {
+        val key = "${rule.packageName}/${rule.activityName}"
+        superviseQuotaSummary(
+            exact = AppStore.tasks.firstOrNull { t -> t.targets.any { t2 -> t2.key == key } },
+            whole = AppStore.tasks.firstOrNull { t -> t.targets.any { t2 -> t2.key == rule.packageName } },
+        )
     }
-    val wholeQuotaTask = remember(rule) {
-        AppStore.tasks.firstOrNull { t -> t.targets.any { it.key == rule.packageName } }
-    }
-    val quotaTask = exactQuotaTask ?: wholeQuotaTask
-    val quotaEditable = (exactQuotaTask != null && exactQuotaTask.targets.size <= 1) ||
-        (exactQuotaTask == null && wholeQuotaTask == null)
-    var quotaSec by remember(rule) { mutableStateOf(exactQuotaTask?.rules?.dayLimitSec ?: 0) }
-    var cntText by remember(rule) {
-        mutableStateOf(exactQuotaTask?.rules?.dayLimitCnt?.toString() ?: "")
-    }
-    val cntVal = cntText.toIntOrNull()
-    val cntInvalid = cntText.isNotBlank() && (cntVal == null || cntVal !in 1..999)
-    val quotaOver = quotaSec / 60 > 1440
-    val overNow = remember(rule) {
-        com.activitylock.app.core.SuperviseEngine.blocks(ctx).any {
-            it.key == rule.packageName || it.key == "${rule.packageName}/${rule.activityName}"
-        }
-    }
-    var saveNeedsVerify by remember(rule) { mutableStateOf(false) }
     // ---- 到点跳转（默认关；与时长限额同一套 UI）----
     val sessionExisting = AppStore.sessionCfgs.firstOrNull { it.pkg == rule.packageName }
     var sessionOn by remember(rule) { mutableStateOf(sessionExisting != null) }
@@ -1424,15 +1419,7 @@ private fun RuleEditDialog(
     }
     fun doSave() {
         AppStore.updateNote(rule.packageName, rule.activityName, text)
-        // 这个界面的每日监督额度（界面级对象）：独占任务 → 就地改；没任务 → 新建一个
-        if (quotaEditable) {
-            val ok = AppStore.setTargetQuota(
-                rule.packageName, rule.activityName,
-                quotaSec.takeIf { it >= 60 },
-                cntVal?.takeIf { it in 1..999 },
-            )
-            if (!ok) AppStore.toast("该界面被多对象任务共用，请去「APP 监督」调整")
-        }
+        // 每日额度不在这里保存 —— 它有自己的弹窗，改完即生效（见 TargetQuotaDialog）
         // 到点跳转：开 = 保存配置（秒 → 分钟），关 = 清除
         if (sessionOn) {
             val t = sessionTarget.trim()
@@ -1457,16 +1444,6 @@ private fun RuleEditDialog(
             if (o != null && !o.locked) AppStore.toast("跳转已保存，但启用拦截失败：${o.detail}")
             onRefreshPm()
         }
-    }
-    fun quotaValuesChanged(): Boolean {
-        val newSec = quotaSec.takeIf { it >= 60 }
-        val newCnt = cntVal?.takeIf { it in 1..999 }
-        return newSec != quotaTask?.rules?.dayLimitSec || newCnt != quotaTask?.rules?.dayLimitCnt
-    }
-    fun requestSave() {
-        // 该对象正在被拦 + 额度值有变化 → 先验证再保存（改额度 = 解除拦截）
-        saveNeedsVerify = quotaEditable && overNow && quotaValuesChanged()
-        if (!saveNeedsVerify) doSave()
     }
     AlertDialog(
         onDismissRequest = { onDismiss() },
@@ -1529,63 +1506,32 @@ private fun RuleEditDialog(
                     )
                 }
                 Spacer(Modifier.height(8.dp))
-                // ★ v1.32.0：这里是**这个界面**（pkg/cls）的每日监督额度。
-                //   数据源是监督任务：该对象独占一个任务时就地改；属于多对象任务时只读。
-                Text("每日监督（这个界面）", style = MaterialTheme.typography.labelMedium)
-                if (!quotaEditable) {
-                    Text(
-                        when {
-                            exactQuotaTask != null ->
-                                "已属于任务「${exactQuotaTask.name}」（${exactQuotaTask.targets.size} 个对象共用一套规则），" +
-                                    "请去「设置 → APP 监督」调整"
-                            else ->
-                                "该 App 由整包任务「${wholeQuotaTask?.name}」监督，这个界面跟着整包走；" +
-                                    "调整请去「设置 → APP 监督」"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    DurationField(
-                        seconds = quotaSec,
-                        onChange = { quotaSec = it },
-                        units = listOf(DurationUnit.MIN, DurationUnit.HOUR),
-                        equivalent = { sec ->
-                            when {
-                                sec <= 0 -> "不限时长"
-                                sec / 60 > 1440 -> "超出上限：每天最多 24 小时"
-                                else -> "每天可用 " + relockDelayLabel(sec)
-                            }
-                        },
-                    )
-                    if (quotaOver) {
+                // ★ v1.32.0：这里只放**入口**，额度在独立弹窗里设（与「解锁条件」「自动锁闭」同构）。
+                //   整包任务在管这个 App 时也能直接给这个界面单独设一套，不必跑去监督页；
+                //   摘要那一行说明当前是「单独」还是「跟随整包」，避免看不出实际裁决。
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { onEditQuota(rule) }
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("每日监督（这个界面）", style = MaterialTheme.typography.labelMedium)
                         Text(
-                            "超出上限：每天最多 24 小时（1440 分钟）",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error
+                            quotaSummary,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = cntText,
-                        onValueChange = { cntText = it.filter { c -> c.isDigit() }.take(3) },
-                        label = { Text("每天最多打开（留空不限）") },
-                        singleLine = true,
-                        isError = cntInvalid,
-                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
-                            imeAction = androidx.compose.ui.text.input.ImeAction.Done
-                        ),
-                        modifier = Modifier.fillMaxWidth()
+                    Icon(
+                        Icons.Default.KeyboardArrowRight,
+                        contentDescription = "设置每日监督",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
                     )
-                    if (overNow) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "这个界面今日已被拦下；调整额度需要先通过验证",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
                 }
                 Spacer(Modifier.height(12.dp))
                 // ---- 到点跳转（默认关；开启后才能设置，与时长限额同一套 UI）----
@@ -1643,27 +1589,214 @@ private fun RuleEditDialog(
             }
         },
         confirmButton = {
-            TextButton(
-                enabled = !quotaEditable || (!quotaOver && !cntInvalid),
-                onClick = { requestSave() }
-            ) { Text("保存") }
+            TextButton(onClick = { doSave() }) { Text("保存") }
         },
         dismissButton = {
             TextButton(onClick = { onDismiss() }) { Text("取消") }
         }
     )
+}
 
-    // 该对象正在被拦 + 额度有变化 → 先验证（改额度等于解除拦截）
-    if (saveNeedsVerify) {
+/**
+ * 「每日监督（这个界面）」一行的摘要。
+ *
+ * 三种状态必须一眼分清，否则用户看不出这个界面到底按哪套规则走：
+ *  - 单独：这个界面独占一个任务，规则就是它的；
+ *  - 跟随整包：这个 App 有整包任务，界面跟着整包的额度走（整包用完一样被拦）；
+ *  - 统一管理：这个界面在一个多对象任务里，就地改会波及其他对象。
+ */
+private fun superviseQuotaSummary(exact: SuperviseTask?, whole: SuperviseTask?): String {
+    fun rulesText(t: SuperviseTask): String {
+        if (!t.enabled) return "任务已关闭"
+        val r = t.rules
+        val parts = ArrayList<String>()
+        if (r.forbid) parts.add("禁止使用")
+        r.dayLimitSec?.let { parts.add(quotaDurLabel(it)) }
+        r.dayLimitCnt?.let { parts.add("$it 次") }
+        return if (parts.isEmpty()) "未设置规则" else "每天 " + parts.joinToString(" · ")
+    }
+    if (exact != null && exact.targets.size > 1) {
+        return "由任务「${exact.name}」统一管理 ${exact.targets.size} 个对象"
+    }
+    if (exact != null) {
+        return if (exact.enabled) "单独：" + rulesText(exact)
+        else "独立任务「${exact.name}」已关闭"
+    }
+    if (whole != null && whole.enabled) return "跟随整包「${whole.name}」：" + rulesText(whole)
+    return "未设置"
+}
+
+/** 每日额度的时长文案：「60 分钟」统一显示成「1 小时」。 */
+private fun quotaDurLabel(sec: Int): String = when {
+    sec <= 0 -> "不限"
+    sec % 3600 == 0 -> "${sec / 3600} 小时"
+    else -> "${sec / 60} 分钟"
+}
+
+/**
+ * 这个界面的每日监督额度（★ v1.32.0）。
+ *
+ * 独立弹窗，改完立即生效 —— 与「解锁条件」「自动锁闭」的交互一致。
+ * 只有两个维度（每天时长 / 每天次数），这是「监督」而不是「锁定」：
+ * 额度内正常用，超额才拦，次日 0 点恢复。
+ *
+ * 三种来源的差异必须如实说出来：
+ *  - 整包任务也在管这个 App → 整包额度用完时这个界面一样被拦（watcher 的包级条目
+ *    会拦掉包内所有组件，做不了「包级拦截 + 单界面放行」），所以不承诺「单独设置就
+ *    不受整包约束」，否则就是个看起来生效、实际不生效的假开关；
+ *  - 多对象任务 → 只读，去监督页改；
+ *  - 该对象超额中且额度有变化 → 先过验证（改额度 = 解除拦截，属削弱类动作）。
+ */
+@Composable
+private fun TargetQuotaDialog(rule: LockRule, onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    val key = "${rule.packageName}/${rule.activityName}"
+    val label = com.activitylock.app.core.superviseTargetLabel(rule.packageName, rule.activityName)
+    val exact = remember(rule) {
+        AppStore.tasks.firstOrNull { t -> t.targets.any { it.key == key } }
+    }
+    val whole = remember(rule) {
+        AppStore.tasks.firstOrNull { t -> t.targets.any { it.key == rule.packageName } }
+    }
+    val shared = exact != null && exact.targets.size > 1
+    var sec by remember(rule) { mutableStateOf(exact?.rules?.dayLimitSec ?: 0) }
+    var cntText by remember(rule) { mutableStateOf(exact?.rules?.dayLimitCnt?.toString() ?: "") }
+    val cntVal = cntText.toIntOrNull()
+    val cntInvalid = cntText.isNotBlank() && (cntVal == null || cntVal !in 1..999)
+    val secOver = sec / 60 > 1440
+    val overNow = remember(rule) {
+        com.activitylock.app.core.SuperviseEngine.blocks(ctx).any {
+            it.key == rule.packageName || it.key == key
+        }
+    }
+    var needVerify by remember(rule) { mutableStateOf(false) }
+
+    fun save() {
+        val ok = AppStore.setTargetQuota(
+            rule.packageName, rule.activityName,
+            sec.takeIf { it >= 60 },
+            cntVal?.takeIf { it in 1..999 },
+        )
+        // 任务被关掉时保存额度 → 必须顺手打开它。否则用户以为设好了，实际一条都不判（假开关）
+        if (ok && exact != null && !exact.enabled) AppStore.setTaskEnabled(exact.id, true)
+        AppStore.toast(
+            if (ok) "已保存「$label」的每日监督" else "这个界面由多对象任务统一管理，请去「APP 监督」调整"
+        )
+        onDismiss()
+    }
+    fun requestSave() {
+        val newSec = sec.takeIf { it >= 60 }
+        val newCnt = cntVal?.takeIf { it in 1..999 }
+        // 超额中调额度 = 削弱类动作，先过验证（与配额页移除同一道闸）
+        needVerify = !shared && overNow &&
+            (newSec != exact?.rules?.dayLimitSec || newCnt != exact?.rules?.dayLimitCnt)
+        if (!needVerify) save()
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("每日监督（这个界面）", style = MaterialTheme.typography.titleMedium) },
+        text = {
+            com.activitylock.app.ui.components.DialogImePan()
+            Column {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(10.dp))
+                if (shared) {
+                    Text(
+                        "这个界面由任务「${exact?.name}」统一管理（${exact?.targets?.size} 个对象共用一套规则），" +
+                            "请去「设置 → APP 监督」调整",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
+                }
+                // 独立任务被关掉时，保存会顺手把它重新打开——先说清楚，别让人以为改了个假值
+                if (!shared && exact != null && !exact.enabled) {
+                    Text(
+                        "任务「${exact.name}」当前已关闭；保存后会重新开启",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                DurationField(
+                    seconds = sec,
+                    onChange = { sec = it },
+                    units = listOf(DurationUnit.MIN, DurationUnit.HOUR),
+                    equivalent = { s ->
+                        when {
+                            s <= 0 -> "不限时长"
+                            s / 60 > 1440 -> "超出上限：每天最多 24 小时"
+                            else -> "每天可用 " + quotaDurLabel(s)
+                        }
+                    },
+                )
+                if (secOver) {
+                    Text(
+                        "超出上限：每天最多 24 小时（1440 分钟）",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = cntText,
+                    onValueChange = { cntText = it.filter { c -> c.isDigit() }.take(3) },
+                    label = { Text("每天最多打开（留空不限）") },
+                    singleLine = true,
+                    isError = cntInvalid,
+                    enabled = !shared,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Done
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                // 整包任务同时生效 → 必须说清楚，否则「单独设了 5 次还是进不去」会被当成 bug
+                if (!shared && whole != null && whole.enabled) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "整包任务「${whole.name}」也在管这个 App：整包额度用完时，这个界面同样会被拦",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (overNow && !shared) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "这个界面今日已被拦下；调整额度需要先通过验证",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !shared && !secOver && !cntInvalid,
+                onClick = { requestSave() }
+            ) { Text("保存") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        }
+    )
+
+    if (needVerify) {
         com.activitylock.app.ui.components.UnlockVerifyDialog(
             requirement = VerifyGate.bulkRequirement(ctx, AppStore.rules),
             title = "调整额度验证",
-            hint = "该界面今日已被拦下，调整额度等于解除拦截",
+            hint = "这个界面今日已被拦下，调整额度等于解除拦截",
             onConfirmed = {
-                saveNeedsVerify = false
-                doSave()
+                needVerify = false
+                save()
             },
-            onDismiss = { saveNeedsVerify = false }
+            onDismiss = { needVerify = false }
         )
     }
 }

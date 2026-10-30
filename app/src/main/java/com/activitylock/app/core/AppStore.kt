@@ -242,27 +242,40 @@ object AppStore {
     /**
      * 工作台就地设置某个对象的每日额度。
      *
-     * 三种情况：
-     *  - 该对象独占一个任务 → 直接改它的规则；
+     * 四种情况：
+     *  - 该对象独占一个任务 → 直接改它的规则；**两个维度都清空 = 取消监督，任务一并删掉**
+     *    （「关闭」必须写到底，不能留一个规则全空的任务挂在监督页上）；
      *  - 该对象属于「多对象任务」（一套规则管好几个 App/界面）→ 不动，返回 false
      *    （就地改会波及其他对象，必须去监督页整体调整）；
-     *  - 没有任何任务 → 新建一个只含该对象的任务，名字用「App › 界面」。
+     *  - 该 App 只有整包任务在管、这个界面还没有独立任务 → 新建一个只含该界面的任务
+     *    （★ v1.32.0：整包与界面是两层，整包管着也允许单独给某个界面设更严的额度）；
+     *  - 完全没有任务 → 新建一个只含该对象的任务，名字用「App › 界面」。
      */
     fun setTargetQuota(pkg: String, cls: String?, limitSec: Int?, limitCnt: Int?): Boolean {
         if (!::taskStore.isInitialized) return false
         val key = if (cls.isNullOrBlank()) pkg else "$pkg/$cls"
+        val clear = limitSec == null && limitCnt == null
         val own = tasks.firstOrNull { t -> t.targets.size == 1 && t.targets[0].key == key }
         if (own != null) {
-            taskStore.upsert(
-                own.copy(rules = own.rules.copy(dayLimitSec = limitSec, dayLimitCnt = limitCnt))
-            )
+            if (clear) {
+                // 只清「每日时长/次数」这两个维度，别把同一个任务里的禁止使用、
+                // 时段额度一起删掉；确实没有别的规则了才把空任务一并删掉
+                val rest = own.rules.copy(dayLimitSec = null, dayLimitCnt = null)
+                val hasOther = rest.forbid || rest.windowLimitSec != null ||
+                    rest.windowLimitCnt != null || rest.runMin != null || rest.restMin != null
+                if (hasOther) taskStore.upsert(own.copy(rules = rest)) else taskStore.remove(own.id)
+            } else {
+                taskStore.upsert(
+                    own.copy(rules = own.rules.copy(dayLimitSec = limitSec, dayLimitCnt = limitCnt))
+                )
+            }
             tasks = taskStore.tasks
             notifySuperviseChanged()
             return true
         }
         val shared = tasks.firstOrNull { t -> t.targets.size > 1 && t.targets.any { it.key == key } }
         if (shared != null) return false
-        if (limitSec == null && limitCnt == null) return true // 本来就没有任务，留空 = 不监督
+        if (clear) return true // 本来就没有独立任务，留空 = 不单独监督
         val target = SuperviseTarget(pkg, cls)
         taskStore.upsert(
             SuperviseTask(
